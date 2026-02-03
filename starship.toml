@@ -8,15 +8,15 @@ $directory\
 )\
 $cmd_duration\
 $fill\
-[ $battery](fg:text_color)\
-[ $java](fg:text_color)\
-[ $nodejs](fg:text_color)\
-[ $python](fg:text_color)\
-[ $conda](fg:text_color)\
-[ $rust](fg:text_color)\
-[ $golang](fg:text_color)\
-[ $bun](fg:text_color)\
-[ $docker_context](fg:text_color)
+[$battery](fg:text_color)\
+[$java](fg:text_color)\
+[$nodejs](fg:text_color)\
+[$python](fg:text_color)\
+[$conda](fg:text_color)\
+[$rust](fg:text_color)\
+[$golang](fg:text_color)\
+[$bun](fg:text_color)\
+[$docker_context](fg:text_color)
 [╰─](fg:arrow)$character"""
 
 add_newline = true
