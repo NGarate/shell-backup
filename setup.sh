@@ -439,7 +439,7 @@ esac
 alias p="pnpm"
 alias pa="pnpm add"
 alias pad="pnpm add -D"
-alias pi="pnpm install"
+alias pin="pnpm install"
 alias pr="pnpm remove"
 alias prd="pnpm remove -D"
 alias pup="pnpm update"
@@ -509,10 +509,6 @@ bind -r Right select-pane -R
 bind -r Up    select-pane -U
 bind -r Down  select-pane -D
 
-# Disable Option + Arrow window switching (macOS)
-unbind -T root M-Left
-unbind -T root M-Right
-
 # List of plugins
 set -g @plugin 'tmux-plugins/tpm'
 set -g @plugin 'tmux-plugins/tmux-sensible'
@@ -527,15 +523,16 @@ set -g @resurrect-capture-pane-contents 'on'
 
 # Custom status bar
 set -g status-style fg=white,bg=#265BCA
-set -g window-status-format " [#I]: #W "
-set -g window-status-current-format " [#I]: #W "
+set -g window-status-format "[#I]:#W"
 setw -g window-status-style fg=white,bg=#265BCA
 setw -g window-status-current-style fg=black,bg=#E8DB57
 setw -g window-status-separator "|"
 set -g status-position bottom
 set -g status-interval 1
-set -g status-left "#{session_name} "
+set -g status-left "#{session_name}"
 set -g status-left-length 50
+set -g status-right ""
+set -g status-justify left
 
 # Initialize TMUX plugin manager (keep this as the last line of .tmux.conf)!!!
 run '~/.tmux/plugins/tpm/tpm'
@@ -568,6 +565,11 @@ font-feature = +calt
 # Session recovery - Ghostty restores UI state (windows/tabs/splits)
 window-save-state = always
 shell-integration = detect
+
+# Remove window padding to maximize usable space
+window-padding-x = 0
+window-padding-y = 0
+window-padding-balance = false
 
 # macOS specific
 font-thicken = true
@@ -943,7 +945,7 @@ print_summary() {
 Installed Components:
   ✓ zsh (default shell)
   ✓ Zinit plugin manager (9 plugins)
-  ✓ tmux with 6 plugins
+  ✓ tmux with 5 plugins
   ✓ Ghostty terminal (with session recovery)
   ✓ Starship modern prompt
   ✓ fzf, zoxide, ripgrep, fd
@@ -999,6 +1001,7 @@ main() {
     install_fonts || true
 
     deploy_zshrc
+    setup_tmux_plugins
     deploy_tmux_conf
     deploy_ghostty_config
     deploy_starship_config
@@ -1007,7 +1010,6 @@ main() {
     setup_shell
     setup_nvm
     setup_zinit_plugins
-    setup_tmux_plugins
     setup_auto_update
 
     verify_installation
