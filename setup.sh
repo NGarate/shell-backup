@@ -519,7 +519,6 @@ set -g @plugin 'tmux-plugins/tmux-sensible'
 set -g @plugin 'tmux-plugins/tmux-continuum'
 set -g @plugin 'tmux-plugins/tmux-resurrect'
 set -g @plugin 'tmux-plugins/tmux-yank'
-set -g @plugin 'tmux-plugins/tmux-battery'
 
 # Plugins configuration
 set -g @continuum-boot 'on'
@@ -537,12 +536,6 @@ set -g status-position bottom
 set -g status-interval 1
 set -g status-left "#{session_name} "
 set -g status-left-length 50
-
-# Battery status configuration
-set -g @batt_icon_status_charged '󰁹'
-set -g @batt_icon_status_charging '󰢝'
-set -g @batt_icon_status_discharging '󰁼'
-set -g status-right '%a %d %B %H:%M | #{battery_icon}: #{battery_percentage} #{battery_remain}'
 
 # Initialize TMUX plugin manager (keep this as the last line of .tmux.conf)!!!
 run '~/.tmux/plugins/tpm/tpm'

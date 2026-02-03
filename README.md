@@ -25,7 +25,7 @@ chmod +x setup.sh
 
 ### Terminal & Multiplexing
 - **tmux** - Terminal multiplexer with session management
-- **tmux plugin manager (tpm)** - 6 tmux plugins for enhanced functionality
+- **tmux plugin manager (tpm)** - 5 tmux plugins for enhanced functionality
 - **Alacritty** - GPU-accelerated terminal emulator (optional)
 
 ### Developer Tools
@@ -105,7 +105,6 @@ pnpm  # typed as 'pnpm'
 3. **tmux-continuum** - Auto-save and restore sessions every 15min
 4. **tmux-resurrect** - Save/restore tmux panes and windows
 5. **tmux-yank** - Clipboard integration (copy to system clipboard)
-6. **tmux-battery** - Battery indicator in status bar
 
 ### Developer Tools
 
