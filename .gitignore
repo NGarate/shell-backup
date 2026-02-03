@@ -1,0 +1,36 @@
+# Sensitive/Private
+.ssh/
+.env
+.env.local
+.env.*.local
+
+# Generated during setup
+.backup/
+.setup.log
+*.backup.*
+*.backup
+setup.log.*
+
+# Plugin/Package managers
+.local/share/zinit/
+.tmux/plugins/
+.config/alacritty/themes/
+.oh-my-zsh/
+.nvm/
+
+# System/IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.AppleDouble
+.LSOverride
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+.npm/
