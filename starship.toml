@@ -8,7 +8,6 @@ $directory\
 )\
 $cmd_duration\
 $fill\
-[ $time](fg:text_color)\
 [ $battery](fg:text_color)\
 [ $java](fg:text_color)\
 [ $nodejs](fg:text_color)\
