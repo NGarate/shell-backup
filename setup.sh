@@ -1,9 +1,9 @@
 #!/bin/bash
 
 ################################################################################
-# SHELL-BACKUP: Cross-Platform Development Environment Setup
-# Supports: macOS (Intel/ARM), Ubuntu/Debian, Fedora/RHEL, Arch Linux
-# Version: 1.0.0
+# SHELL-BACKUP: Development Environment Setup
+# Supports: macOS (Intel/Apple Silicon), Ubuntu/Debian (apt + snapd)
+# Version: 2.0.0
 ################################################################################
 
 set -euo pipefail
@@ -73,32 +73,17 @@ detect_os() {
     esac
 }
 
-detect_distro() {
-    if [[ "$OS_TYPE" != "linux" ]]; then
+detect_package_manager() {
+    if [[ "$OS_TYPE" == "darwin" ]]; then
+        PKG_MANAGER="brew"
         return 0
     fi
 
-    if [[ -f /etc/os-release ]]; then
-        . /etc/os-release
-        case "$ID" in
-            ubuntu|debian)
-                DISTRO="debian"
-                PKG_MANAGER="apt"
-                ;;
-            fedora|rhel|centos)
-                DISTRO="fedora"
-                PKG_MANAGER="dnf"
-                ;;
-            arch|manjaro)
-                DISTRO="arch"
-                PKG_MANAGER="pacman"
-                ;;
-            *)
-                warning "Unknown Linux distribution: $ID"
-                DISTRO="unknown"
-                PKG_MANAGER="unknown"
-                ;;
-        esac
+    # Linux: Ubuntu/Debian only
+    if command_exists apt-get; then
+        PKG_MANAGER="apt"
+    else
+        error "No supported package manager found. This script requires apt (Ubuntu/Debian)."
     fi
 }
 
@@ -146,8 +131,11 @@ check_prerequisites() {
 setup_package_manager() {
     log "Setting up package manager..."
 
-    if [[ "$OS_TYPE" == "darwin" ]]; then
-        if ! command_exists brew; then
+    detect_package_manager
+    log "Detected package manager: $PKG_MANAGER"
+
+    if [[ "$PKG_MANAGER" == "brew" ]]; then
+        if [[ "$OS_TYPE" == "darwin" ]] && ! command_exists brew; then
             log "Installing Homebrew..."
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
             success "Homebrew installed"
@@ -155,39 +143,14 @@ setup_package_manager() {
             success "Homebrew already available"
         fi
         
-        # Ensure brew is in PATH for M1/M2 Macs
+        # Ensure brew is in PATH for Apple Silicon Macs
         if [[ "$ARCH" == "aarch64" ]]; then
             export PATH="/opt/homebrew/bin:$PATH"
         fi
-    elif [[ "$OS_TYPE" == "linux" ]]; then
-        detect_distro
-        log "Detected Linux distribution: $DISTRO"
-
-        case "$PKG_MANAGER" in
-            apt)
-                if ! command_exists apt-get; then
-                    error "apt-get not found"
-                fi
-                log "Running apt update..."
-                sudo apt-get update -qq
-                success "apt-get ready"
-                ;;
-            dnf)
-                if ! command_exists dnf; then
-                    error "dnf not found"
-                fi
-                success "dnf ready"
-                ;;
-            pacman)
-                if ! command_exists pacman; then
-                    error "pacman not found"
-                fi
-                success "pacman ready"
-                ;;
-            *)
-                error "Unsupported package manager"
-                ;;
-        esac
+    elif [[ "$PKG_MANAGER" == "apt" ]]; then
+        log "Running apt update..."
+        sudo apt-get update -qq
+        success "apt ready"
     fi
 }
 
@@ -210,22 +173,6 @@ install_via_package_manager() {
                 sudo apt-get install -y -qq "$package"
             fi
             ;;
-        dnf)
-            if ! command_exists "$package" 2>/dev/null; then
-                sudo dnf install -y -q "$package"
-            fi
-            ;;
-        pacman)
-            local pkg_name="$package"
-            # Handle package name aliases
-            case "$package" in
-                fzf-binary) pkg_name="fzf" ;;
-                ripgrep) pkg_name="ripgrep" ;;
-            esac
-            if ! pacman -Q "$pkg_name" &>/dev/null; then
-                sudo pacman -S --noconfirm "$pkg_name"
-            fi
-            ;;
     esac
 }
 
@@ -245,24 +192,10 @@ install_core_tools() {
             fi
         done
     else
-        # Linux
-        case "$PKG_MANAGER" in
-            apt)
-                log "Installing tools via apt..."
-                sudo apt-get install -y -qq zsh tmux git curl build-essential fontconfig
-                sudo apt-get install -y -qq fzf zoxide ripgrep fd-find 2>/dev/null || true
-                ;;
-            dnf)
-                log "Installing tools via dnf..."
-                sudo dnf install -y -q zsh tmux git curl gcc g++ make fontconfig
-                sudo dnf install -y -q fzf zoxide ripgrep fd 2>/dev/null || true
-                ;;
-            pacman)
-                log "Installing tools via pacman..."
-                sudo pacman -S --noconfirm zsh tmux git curl base-devel fontconfig
-                sudo pacman -S --noconfirm fzf zoxide ripgrep fd 2>/dev/null || true
-                ;;
-        esac
+        # Ubuntu/Debian via apt
+        log "Installing tools via apt..."
+        sudo apt-get install -y -qq zsh tmux git curl build-essential fontconfig
+        sudo apt-get install -y -qq fzf zoxide ripgrep fd-find wl-clipboard 2>/dev/null || true
     fi
 
     success "Core tools installed"
@@ -286,40 +219,48 @@ install_starship() {
     success "Starship installed"
 }
 
-install_alacritty() {
-    log "Installing Alacritty..."
+install_ghostty() {
+    log "Installing Ghostty..."
 
-    if command_exists alacritty; then
-        success "Alacritty already installed"
+    if command_exists ghostty; then
+        success "Ghostty already installed"
         return 0
     fi
 
     if [[ "$OS_TYPE" == "darwin" ]]; then
-        brew install alacritty
+        brew install ghostty
     else
-        case "$PKG_MANAGER" in
-            apt)
-                sudo apt-get install -y -qq alacritty || {
-                    warning "Alacritty not in apt repositories, skipping"
-                    return 1
-                }
-                ;;
-            dnf)
-                sudo dnf install -y -q alacritty || {
-                    warning "Alacritty not in dnf repositories, skipping"
-                    return 1
-                }
-                ;;
-            pacman)
-                sudo pacman -S --noconfirm alacritty || {
-                    warning "Alacritty not available, skipping"
-                    return 1
-                }
-                ;;
-        esac
+        # Ubuntu: use snap for Ghostty
+        if command_exists snap; then
+            sudo snap install ghostty --classic || {
+                warning "Ghostty snap installation failed. You may need to install it manually."
+                return 1
+            }
+        else
+            warning "snap not found. Please install snapd: sudo apt install snapd"
+            return 1
+        fi
     fi
 
-    success "Alacritty installed"
+    success "Ghostty installed"
+}
+
+install_linux_clipboard() {
+    # Only needed on Ubuntu for tmux-yank integration
+    if [[ "$OS_TYPE" != "linux" ]]; then
+        return 0
+    fi
+
+    log "Checking clipboard support for tmux..."
+
+    if command_exists wl-copy; then
+        success "wl-clipboard already installed"
+        return 0
+    fi
+
+    sudo apt-get install -y -qq wl-clipboard
+
+    success "wl-clipboard installed"
 }
 
 ################################################################################
@@ -327,30 +268,41 @@ install_alacritty() {
 ################################################################################
 
 install_fonts() {
-    log "Installing Iosevka Nerd Font..."
+    log "Installing JetBrains Mono..."
 
     local font_dir
     if [[ "$OS_TYPE" == "darwin" ]]; then
         font_dir="$HOME/Library/Fonts"
-        mkdir -p "$font_dir"
     else
         font_dir="$HOME/.local/share/fonts"
-        mkdir -p "$font_dir"
     fi
+    mkdir -p "$font_dir"
 
-    # Check if fonts already exist
-    if ls "$font_dir"/IosevkaTerm* &>/dev/null 2>&1; then
-        success "Fonts already installed"
+    # Check if JetBrains Mono is already installed
+    if ls "$font_dir"/JetBrainsMono*.ttf &>/dev/null 2>&1 || \
+       ls "$font_dir"/JetBrainsMono*.otf &>/dev/null 2>&1; then
+        success "JetBrains Mono already installed"
         return 0
     fi
 
-    # Copy fonts from script directory
-    if [[ -d "$SCRIPT_DIR/fonts" ]]; then
-        log "Copying fonts from $SCRIPT_DIR/fonts..."
-        cp "$SCRIPT_DIR"/fonts/*.ttf "$font_dir/"
-        success "Fonts copied to $font_dir"
+    log "Downloading JetBrains Mono..."
+    local temp_dir=$(mktemp -d)
+    local jb_version="2.304"
+    local download_url="https://github.com/JetBrains/JetBrainsMono/releases/download/v${jb_version}/JetBrainsMono-${jb_version}.zip"
+
+    if curl -fsSL "$download_url" -o "$temp_dir/jetbrains-mono.zip"; then
+        log "Extracting fonts..."
+        unzip -q "$temp_dir/jetbrains-mono.zip" -d "$temp_dir"
+        
+        # Copy only the required font variants (Regular, Bold, Italic, Bold Italic)
+        log "Installing font files..."
+        find "$temp_dir" -name "JetBrainsMono-*.ttf" -exec cp {} "$font_dir/" \;
+        
+        rm -rf "$temp_dir"
+        success "JetBrains Mono installed to $font_dir"
     else
-        warning "fonts directory not found in script directory"
+        warning "Failed to download JetBrains Mono. You may need to install it manually."
+        rm -rf "$temp_dir"
         return 1
     fi
 
@@ -514,6 +466,16 @@ export PATH="$HOME/.local/bin:$PATH"
 if [[ -f ~/.env ]]; then
     export $(cat ~/.env | xargs)
 fi
+
+# ============================================================================
+# Tmux Auto-attach (Ghostty integration)
+# ============================================================================
+
+# Auto-start tmux when opening Ghostty
+# Ghostty sets TERM to xterm-ghostty
+if [[ -z "$TMUX" && "$TERM" == xterm-ghostty* ]]; then
+    tmux new-session -A -s main
+fi
 ZSHRC_EOF
 
     # Replace placeholders
@@ -540,19 +502,16 @@ set -g pane-base-index 1
 set -g mouse on
 set -g renumber-windows on
 
-# Map escape sequences from Alacritty to pane navigation
+# Map escape sequences for pane navigation
 bind -r Left  select-pane -L
 bind -r Right select-pane -R
 
 bind -r Up    select-pane -U
 bind -r Down  select-pane -D
 
-# Disable Option + Arrow window switching
+# Disable Option + Arrow window switching (macOS)
 unbind -T root M-Left
 unbind -T root M-Right
-
-# Disable clipborar in order to work fine with Alacritty
-set -g set-clipboard off
 
 # List of plugins
 set -g @plugin 'tmux-plugins/tpm'
@@ -592,79 +551,39 @@ TMUX_EOF
     success ".tmux.conf deployed"
 }
 
-deploy_alacritty_config() {
-    log "Deploying Alacritty configuration..."
+deploy_ghostty_config() {
+    log "Deploying Ghostty configuration..."
 
-    mkdir -p "$HOME/.config/alacritty"
+    mkdir -p "$HOME/.config/ghostty"
     
-    # Use ~/.alacritty.toml if it exists, otherwise create in .config
-    local alacritty_config
-    if [[ -f "$HOME/.alacritty.toml" ]]; then
-        backup_file "$HOME/.alacritty.toml"
-        alacritty_config="$HOME/.alacritty.toml"
+    backup_file "$HOME/.config/ghostty/config"
+
+    # Platform-specific fullscreen keybinding
+    local fullscreen_keybind
+    if [[ "$OS_TYPE" == "darwin" ]]; then
+        fullscreen_keybind="keybind = cmd+shift+f=toggle_fullscreen"
     else
-        alacritty_config="$HOME/.config/alacritty/alacritty.toml"
+        fullscreen_keybind="keybind = alt+shift+f=toggle_fullscreen"
     fi
 
-    # Check if theme directory exists, create if needed
-    mkdir -p "$HOME/.config/alacritty/themes/themes"
+    cat > "$HOME/.config/ghostty/config" << GHOSTTY_EOF
+# Font configuration
+font-family = JetBrains Mono
+font-size = 13.5
+font-feature = +calt
 
-    cat > "$alacritty_config" << 'ALACRITTY_EOF'
-[general]
-import = ["~/.config/alacritty/themes/themes/gnome_terminal.toml"]
-live_config_reload = true
+# Session recovery - Ghostty restores UI state (windows/tabs/splits)
+window-save-state = always
+shell-integration = detect
 
-[window]
-decorations = "none"
-dynamic_padding = true
-option_as_alt = "None"
+# macOS specific
+font-thicken = true
 
-[font]
-normal = { family = "IosevkaTerm Nerd Font Mono", style = "ExtraLight" }
-bold = { family = "IosevkaTerm Nerd Font Mono", style = "Medium" }
-italic = { family = "IosevkaTerm Nerd Font Mono", style = "ExtraLight Italic" }
-size = 15
+# Fullscreen toggle (platform-specific)
+${fullscreen_keybind}
+GHOSTTY_EOF
 
-[keyboard]
-bindings = [
-  # Fullscreen
-  { key = "F", mods = "Command|Shift", action = "ToggleFullscreen" },
-
-  # tmux windows (prefix = Ctrl-A): Cmd+Shift+Left/Right -> prev/next window
-  { key = "Left",  mods = "Command|Shift", chars = "\u0001p" },
-  { key = "Right", mods = "Command|Shift", chars = "\u0001n" },
-
-  # tmux windows direct: Cmd + number (prefix = Ctrl-A + number)
-  { key = "Key1", mods = "Command", chars = "\u00011" },
-  { key = "Key2", mods = "Command", chars = "\u00012" },
-  { key = "Key3", mods = "Command", chars = "\u00013" },
-  { key = "Key4", mods = "Command", chars = "\u00014" },
-  { key = "Key5", mods = "Command", chars = "\u00015" },
-  { key = "Key6", mods = "Command", chars = "\u00016" },
-  { key = "Key7", mods = "Command", chars = "\u00017" },
-  { key = "Key8", mods = "Command", chars = "\u00018" },
-  { key = "Key9", mods = "Command", chars = "\u00019" },
-
-  # tmux panes (prefix = Ctrl-A): Option+Shift+Arrows -> select pane L/R/U/D
-  { key = "Left",  mods = "Alt|Shift", chars = "\u0001\u001bOD" },
-  { key = "Right", mods = "Alt|Shift", chars = "\u0001\u001bOC" },
-  { key = "Up",    mods = "Alt|Shift", chars = "\u0001\u001bOA" },
-  { key = "Down",  mods = "Alt|Shift", chars = "\u0001\u001bOB" },
-
-  # Zsh word-wise navigation: Option+Left/Right (ESC b / ESC f)
-  { key = "Left",  mods = "Alt", chars = "\u001Bb" },
-  { key = "Right", mods = "Alt", chars = "\u001Bf" },
-
-  # Shell line navigation: Cmd+Left/Right (Ctrl-A / Ctrl-E)
-  { key = "Left",  mods = "Command", chars = "\u0001" },
-  { key = "Right", mods = "Command", chars = "\u0005" },
-  
-  # Fix new line for opencode
-  { key = "Return", mods = "Shift", chars = "\n" }
-]
-ALACRITTY_EOF
-
-    success "Alacritty configuration deployed"
+    success "Ghostty configuration deployed"
 }
 
 ################################################################################
@@ -741,12 +660,13 @@ setup_shell() {
     if command_exists zsh; then
         zsh_path=$(command -v zsh)
         
-        if [[ "$SHELL" != "$zsh_path" ]]; then
+        # Check if zsh is already the default (handle different path formats)
+        if [[ "$SHELL" == *"zsh"* ]]; then
+            success "zsh is already the default shell"
+        else
             log "Changing default shell to $zsh_path..."
             chsh -s "$zsh_path"
             success "Default shell changed to zsh"
-        else
-            success "zsh is already the default shell"
         fi
     else
         error "zsh not found in PATH"
@@ -980,19 +900,28 @@ verify_installation() {
     # Check fonts
     checks_total=$((checks_total + 1))
     if [[ "$OS_TYPE" == "darwin" ]]; then
-        if ls "$HOME/Library/Fonts"/IosevkaTerm* &>/dev/null 2>&1; then
-            success "Fonts installed"
+        if ls "$HOME/Library/Fonts"/JetBrainsMono*.{ttf,otf} &>/dev/null 2>&1; then
+            success "JetBrains Mono installed"
             checks_passed=$((checks_passed + 1))
         else
-            warning "Iosevka fonts not found"
+            warning "JetBrains Mono not found"
         fi
     else
-        if ls "$HOME/.local/share/fonts"/IosevkaTerm* &>/dev/null 2>&1; then
-            success "Fonts installed"
+        if ls "$HOME/.local/share/fonts"/JetBrainsMono*.{ttf,otf} &>/dev/null 2>&1; then
+            success "JetBrains Mono installed"
             checks_passed=$((checks_passed + 1))
         else
-            warning "Iosevka fonts not found"
+            warning "JetBrains Mono not found"
         fi
+    fi
+
+    # Check Ghostty
+    checks_total=$((checks_total + 1))
+    if command_exists ghostty; then
+        success "Ghostty installed"
+        checks_passed=$((checks_passed + 1))
+    else
+        warning "Ghostty not found"
     fi
 
     # Check config files
@@ -1022,11 +951,11 @@ Installed Components:
   ✓ zsh (default shell)
   ✓ Zinit plugin manager (9 plugins)
   ✓ tmux with 6 plugins
-  ✓ Alacritty terminal
+  ✓ Ghostty terminal (with session recovery)
   ✓ Starship modern prompt
   ✓ fzf, zoxide, ripgrep, fd
   ✓ NVM + Node.js LTS
-  ✓ Iosevka Nerd Font
+  ✓ JetBrains Mono font
   ✓ Auto-update scheduled (daily 2:00 AM)
   ✓ Custom functions (gcof)
 
@@ -1063,23 +992,22 @@ main() {
     initialize_log
     
     log "=== SHELL-BACKUP: Setup Starting ==="
-    log "OS: $OS_TYPE | Arch: $ARCH"
 
     detect_os
-    detect_distro
-
-    log "Detected system: $OS_TYPE ($ARCH) - $DISTRO"
+    log "OS: $OS_TYPE | Arch: $ARCH"
+    log "Detected system: $OS_TYPE ($ARCH)"
 
     check_prerequisites
     setup_package_manager
     install_core_tools
     install_starship
-    install_alacritty || true  # Don't fail if alacritty install fails
-    install_fonts || true      # Don't fail if fonts aren't available
+    install_ghostty || true
+    install_linux_clipboard || true
+    install_fonts || true
 
     deploy_zshrc
     deploy_tmux_conf
-    deploy_alacritty_config
+    deploy_ghostty_config
     deploy_starship_config
     deploy_custom_functions
 
@@ -1094,6 +1022,10 @@ main() {
 
     log "=== SHELL-BACKUP: Setup Complete ==="
     success "All done! Check ~/.setup.log for details."
+
+    # Reload zsh to apply all changes
+    log "Reloading shell..."
+    exec zsh
 }
 
 # Run main function
