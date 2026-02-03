@@ -24,7 +24,7 @@ add_newline = true
 palette = "old"
 
 [palettes.old]
-arrow = "#353535"
+arrow = "#FFFFFF"
 os = "#3778BF"
 os_admin = "#6A040F"
 directory = "#3F37C9"
@@ -42,7 +42,7 @@ text_color = "#EDF2F4"
 text_light = "#EDF2F4"
 
 [palettes.normal]
-arrow = "#353535"
+arrow = "#FFFFFF"
 os = "#2C3032"
 os_admin = "#6A040F"
 directory = "#363C3E"
@@ -60,7 +60,7 @@ text_color = "#EDF2F4"
 text_light = "#26272A"
 
 [palettes.light]
-arrow = "#353535"
+arrow = "#FFFFFF"
 os = "#F7768E"
 os_admin = "#ACBEF1"
 directory = "#FF9578"
