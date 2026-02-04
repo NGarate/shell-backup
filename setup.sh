@@ -389,7 +389,7 @@ zinit light junegunn/fzf
 zinit snippet OMZP::node
 
 # pnpm support - aliases and completions
-zinit snippet OMZP::pnpm
+zinit light ntnyq/omz-plugin-pnpm
 
 # Command not found helper - suggests packages for missing commands
 if [[ "$(uname -s)" == "Darwin" ]]; then
