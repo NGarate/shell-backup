@@ -191,6 +191,52 @@ rm -rf ~/.local/share/fonts/Iosevka* # Linux
 
 ---
 
+#### ❌ "JetBrains Mono not found" during setup or verification
+
+**Problem:** The setup script exits with "no matches found" error when checking for existing fonts
+
+**Cause:** zsh's default behavior causes glob patterns to fail when no matching files exist
+
+**Solutions:**
+
+**Option 1: Re-run the fixed script**
+```bash
+# Pull the latest version with the fix
+git pull origin main
+./setup.sh
+```
+
+**Option 2: Manual font installation**
+```bash
+# Download and install manually
+cd /tmp
+curl -fsSL "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip" -o jetbrains-mono.zip
+unzip -q jetbrains-mono.zip
+
+# Install to system
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    cp fonts/ttf/JetBrainsMono-*.ttf ~/Library/Fonts/
+else
+    mkdir -p ~/.local/share/fonts
+    cp fonts/ttf/JetBrainsMono-*.ttf ~/.local/share/fonts/
+    fc-cache -fv ~/.local/share/fonts
+fi
+
+rm -rf jetbrains-mono.zip fonts
+```
+
+**Option 3: Check if fonts are actually installed**
+```bash
+# macOS
+ls ~/Library/Fonts/JetBrainsMono*
+
+# Linux
+ls ~/.local/share/fonts/JetBrainsMono*
+fc-list | grep -i "jetbrains"
+```
+
+---
+
 #### ❌ Starship shows "unknown" for git status
 
 **Problem:** Git status parsing issue

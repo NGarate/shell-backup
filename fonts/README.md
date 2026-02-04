@@ -1,73 +1,71 @@
 # Fonts Directory
 
-This directory should contain the Iosevka Nerd Font files for distribution with shell-backup.
+This directory is for font files that can be distributed with shell-backup.
 
-## Required Files
+## Current Font: JetBrains Mono
 
-The setup script expects the following font files:
-- `IosevkaTerm-ExtraLight.ttf` - Regular weight (normal text)
-- `IosevkaTerm-Medium.ttf` - Bold weight (bold text)
-- `IosevkaTerm-ExtraLight-Italic.ttf` - Italic weight (italic text)
+The setup script now automatically downloads and installs **JetBrains Mono** from the official GitHub releases. No manual font installation is required.
 
-## How to Add Fonts
+### Download Details
 
-### Option 1: Download from Nerd Fonts (Recommended)
+- **Font:** JetBrains Mono
+- **Version:** 2.304
+- **Source:** https://github.com/JetBrains/JetBrainsMono/releases
+- **Download URL:** `https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip`
 
-1. Go to https://www.nerdfonts.com/font-downloads
-2. Download "Iosevka Term Nerd Font" (the monospace terminal variant)
-3. Extract the downloaded zip file
-4. Copy the font files listed above into this directory:
+### Installation Locations
 
-```bash
-# From your Downloads directory
-cd ~/Downloads/IosevkaTermNerdFont
-cp IosevkaTerm-ExtraLight.ttf /path/to/shell-backup/fonts/
-cp IosevkaTerm-Medium.ttf /path/to/shell-backup/fonts/
-cp IosevkaTerm-ExtraLight-Italic.ttf /path/to/shell-backup/fonts/
-```
+The script installs fonts to:
+- **macOS:** `~/Library/Fonts/`
+- **Linux:** `~/.local/share/fonts/`
 
-### Option 2: Copy from Existing Installation
+### What Gets Installed
 
-If you already have Iosevka Nerd Font installed:
-
-**macOS:**
-```bash
-cp ~/Library/Fonts/IosevkaTerm*.ttf /path/to/shell-backup/fonts/
-```
-
-**Linux:**
-```bash
-cp ~/.local/share/fonts/IosevkaTerm*.ttf /path/to/shell-backup/fonts/
-```
-
-### Option 3: Alternative Nerd Fonts
-
-If you prefer a different monospace Nerd Font, you can substitute:
-- Fira Code Nerd Font
-- JetBrains Mono Nerd Font
-- DejaVu Sans Mono Nerd Font
-- Source Code Pro Nerd Font
-
-Just update the font name references in:
-1. `setup.sh` - Update the `deploy_fonts()` function
-2. Configuration files - Update `alacritty.toml`, `starship.toml`, etc.
+All TTF font files are installed:
+- JetBrainsMono-Regular.ttf
+- JetBrainsMono-Bold.ttf
+- JetBrainsMono-Italic.ttf
+- JetBrainsMono-BoldItalic.ttf
+- JetBrainsMono-Light.ttf
+- JetBrainsMono-Medium.ttf
+- JetBrainsMono-SemiBold.ttf
+- JetBrainsMono-ExtraLight.ttf
+- JetBrainsMono-ExtraBold.ttf
+- And their italic variants
 
 ## Font Installation During Setup
 
 When you run `./setup.sh`:
-1. It checks if font files exist in this directory
-2. Copies them to the appropriate system location:
-   - **macOS:** `~/Library/Fonts/`
-   - **Linux:** `~/.local/share/fonts/`
-3. On Linux, runs `fc-cache` to refresh font cache
+1. It checks if JetBrains Mono fonts are already installed
+2. If not, downloads the official release from GitHub
+3. Extracts and installs all TTF files to the system font directory
+4. On Linux, runs `fc-cache` to refresh the font cache
+
+## Troubleshooting
+
+If fonts are not being detected during setup, see [TROUBLESHOOTING.md](../TROUBLESHOOTING.md#jetbrains-mono-not-found-during-setup-or-verification)
+
+## Using Alternative Fonts
+
+If you prefer a different font, you can:
+
+1. Install it manually to your system font directory
+2. Update the terminal configuration (e.g., Ghostty config in `~/.config/ghostty/config`)
+3. Update Starship configuration if needed (`~/.config/starship.toml`)
+
+Recommended alternatives:
+- **Fira Code** - Popular programming font with ligatures
+- **Iosevka** - Tall, narrow monospace font
+- **Cascadia Code** - Microsoft's programming font
+- **Source Code Pro** - Adobe's monospace font
 
 ## Notes
 
 - Font files should be `.ttf` or `.otf` format
-- For best terminal compatibility, use Nerd Fonts variants
+- For best terminal compatibility with icons, use Nerd Fonts variants
 - Terminal must be configured to use the installed font
 - After setup, restart your terminal to apply the font
 
 ---
 
-See [Font Setup Troubleshooting](../TROUBLESHOOTING.md#special-symbols-showing-as-boxes-or-question-marks) for help with font display issues.
+See [Font Setup Troubleshooting](../TROUBLESHOOTING.md) for help with font display issues.
