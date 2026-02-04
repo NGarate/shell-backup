@@ -201,6 +201,12 @@ Complete reference guide for all aliases, keybindings, and shortcuts installed b
 
 ### Copy Mode
 
+System clipboard integration is fully supported via tmux-yank. Works on:
+- **macOS:** Native pbcopy/pbpaste
+- **Linux (Wayland):** Uses wl-copy (wl-clipboard)
+- **Linux (X11):** Uses xclip (auto-detected)
+- **Linux (Ubuntu):** Automatically installs both wl-clipboard and xclip
+
 | Key | Action |
 |-----|--------|
 | `Prefix + [` | Enter copy mode |
