@@ -26,7 +26,6 @@ palette = "old"
 [palettes.old]
 arrow = "#FFFFFF"
 os = "#3778BF"
-os_admin = "#6A040F"
 directory = "#3F37C9"
 node = "green"
 time = "#177E89"
@@ -44,7 +43,6 @@ text_light = "#EDF2F4"
 [palettes.normal]
 arrow = "#FFFFFF"
 os = "#2C3032"
-os_admin = "#6A040F"
 directory = "#363C3E"
 time = "#474D5C"
 node = "#F1DEA9"
@@ -62,7 +60,6 @@ text_light = "#26272A"
 [palettes.light]
 arrow = "#FFFFFF"
 os = "#F7768E"
-os_admin = "#ACBEF1"
 directory = "#FF9578"
 time = "#FFDC72"
 git = "#F5F5F5"
@@ -75,13 +72,6 @@ conda = "#BAF5C0"
 duration = "#91FFE7"
 text_color = "#26272A"
 text_light = "#26272A"
-
-[username]
-style_user = 'os'
-style_root = 'os_admin'
-format = '[]($style)[  mou](bg:$style fg:text_color)[]($style)'
-disabled = false
-show_always = true
 
 [character]
 success_symbol = "[󰍟](fg:arrow)"
@@ -194,7 +184,7 @@ style = "bold green"
 
 [os]
 disabled = false
-format = "[ ](fg:os)[$symbol](bg:os fg:text_color)[](fg:os)"
+format = "[](fg:os)[$symbol](bg:os fg:text_color)[](fg:os)"
 
 [os.symbols]
 Alpine = ""
