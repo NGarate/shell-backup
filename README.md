@@ -180,6 +180,8 @@ docker <up-arrow> # Shows only docker commands from history
 <down-arrow>      # Navigate forward in filtered history
 ```
 
+**📚 See [SHORTCUTS.md](./SHORTCUTS.md) for complete reference of all aliases, keybindings, and shortcuts.**
+
 ## 📝 Configuration Files
 
 All configuration files are installed to their standard locations:
