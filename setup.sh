@@ -415,6 +415,10 @@ fi
 zinit wait lucid light-mode for \
     zsh-users/zsh-history-substring-search
 
+# Bind up/down arrows to history substring search (search history based on typed prefix)
+bindkey '^[[A' history-substring-search-up
+bindkey '^[[B' history-substring-search-down
+
 # Tmux integration - session management helpers (lazy loaded)
 zinit wait lucid for \
     OMZP::tmux \

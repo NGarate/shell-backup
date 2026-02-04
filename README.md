@@ -167,6 +167,11 @@ cd -         # Go to previous directory (built-in)
 # Search files
 rg "pattern" # ripgrep search
 fd "*.ts"    # Find TypeScript files
+
+# History navigation (type prefix then use arrows)
+git <up-arrow>    # Shows only git commands from history
+docker <up-arrow> # Shows only docker commands from history
+<down-arrow>      # Navigate forward in filtered history
 ```
 
 ## 📝 Configuration Files
