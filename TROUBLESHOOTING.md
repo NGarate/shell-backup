@@ -113,6 +113,36 @@ grep "zinit init" ~/.zshrc
 
 ---
 
+#### ❌ Arrow keys don't navigate history or show all history instead of prefix-filtered
+
+**Problem:** After installation, pressing up/down arrows either doesn't work or shows all history instead of filtering by what you've typed
+
+**Cause:** The `zsh-history-substring-search` plugin is loaded but key bindings weren't configured
+
+**Solution:**
+```bash
+# Reload shell to apply the fix
+exec zsh
+
+# Or manually add to your ~/.zshrc after the zinit plugins section:
+bindkey '^[[A' history-substring-search-up
+bindkey '^[[B' history-substring-search-down
+bindkey -M vicmd '^[[A' history-substring-search-up
+bindkey -M vicmd '^[[B' history-substring-search-down
+bindkey -M viins '^[[A' history-substring-search-up
+bindkey -M viins '^[[B' history-substring-search-down
+
+# Then reload
+source ~/.zshrc
+```
+
+**Usage:**
+- Type `git` then press ↑ (up arrow) - only shows commands starting with "git"
+- Type `docker` then press ↑ - only shows commands starting with "docker"
+- Press ↓ (down arrow) to go forward in filtered history
+
+---
+
 #### ❌ zsh not the default shell
 
 **Problem:** System still using bash by default
