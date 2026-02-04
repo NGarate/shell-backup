@@ -582,6 +582,11 @@ font-thicken = true
 
 # Fullscreen toggle (platform-specific)
 ${fullscreen_keybind}
+
+# Remove padding
+window-padding-x = 0
+window-padding-y = 0
+
 GHOSTTY_EOF
 
     success "Ghostty configuration deployed"
