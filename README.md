@@ -15,6 +15,11 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
+## 📖 Quick Reference
+
+- **[SHORTCUTS.md](./SHORTCUTS.md)** - Complete reference for all aliases, keybindings, and shortcuts
+- **[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)** - Common issues and solutions
+
 ## ✨ What Gets Installed
 
 ### Shell & Configuration
@@ -159,6 +164,7 @@ tmux new-session -s dev   # Create new session
 tmux attach -t dev        # Attach to session
 Ctrl+B D                  # Detach from session
 Ctrl+B S                  # Browse sessions
+# Status bar shows: session name | windows | Day DD Mon HH:MM
 
 # Navigate faster
 z <folder>   # Jump to frequently used folder
@@ -203,7 +209,29 @@ All configuration files are installed to their standard locations:
 3. **Edit tmux config:**
    ```bash
    vim ~/.tmux.conf
-   tmux source ~/.tmux.conf  # Reload
+   tmux source ~/.tmux.conf  # Reload configuration
+   ```
+
+   **Important:** Config reload only affects the current session. For a fresh start:
+   ```bash
+   # Option 1: Detach and reattach
+   Ctrl+A D                    # Detach from session
+   tmux attach                 # Reattach (applies new config)
+
+   # Option 2: Kill and recreate session
+   tmux kill-session -t <name> # Kill specific session
+   tmux new                    # Create new session
+   ```
+
+   **Customize status bar:**
+   ```bash
+   # Change date/time format (default: Day DD Mon HH:MM)
+   set -g status-right " %a %d %b %H:%M "
+   
+   # Alternative formats:
+   # 12-hour time: set -g status-right " %a %d %b %I:%M %p "
+   # With seconds: set -g status-right " %a %d %b %H:%M:%S "
+   # US format:     set -g status-right " %a %m/%d %H:%M "
    ```
 
 4. **Add your own aliases:**

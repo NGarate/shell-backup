@@ -543,6 +543,8 @@ set -g status-position bottom
 set -g status-interval 1
 set -g status-left "#{session_name} "
 set -g status-left-length 50
+set -g status-right " %a %d %b %H:%M "
+set -g status-right-length 30
 # Initialize TMUX plugin manager (keep this as the last line of .tmux.conf)!!!
 run '~/.tmux/plugins/tpm/tpm'
 TMUX_EOF
