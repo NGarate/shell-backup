@@ -195,7 +195,7 @@ install_core_tools() {
         # Ubuntu/Debian via apt
         log "Installing tools via apt..."
         sudo apt-get install -y -qq zsh tmux git curl build-essential fontconfig
-        sudo apt-get install -y -qq fzf zoxide ripgrep fd-find wl-clipboard command-not-found 2>/dev/null || true
+        sudo apt-get install -y -qq fzf zoxide ripgrep fd-find wl-clipboard xclip command-not-found 2>/dev/null || true
     fi
 
     success "Core tools installed"
@@ -253,14 +253,58 @@ install_linux_clipboard() {
 
     log "Checking clipboard support for tmux..."
 
-    if command_exists wl-copy; then
+    local clipboard_installed=false
+
+    # Check/install wl-clipboard (Wayland)
+    if ! command_exists wl-copy; then
+        log "Installing wl-clipboard (Wayland support)..."
+        sudo apt-get install -y -qq wl-clipboard
+        success "wl-clipboard installed"
+        clipboard_installed=true
+    else
         success "wl-clipboard already installed"
-        return 0
+        clipboard_installed=true
     fi
 
-    sudo apt-get install -y -qq wl-clipboard
+    # Check/install xclip (X11 fallback)
+    if ! command_exists xclip; then
+        log "Installing xclip (X11 fallback support)..."
+        sudo apt-get install -y -qq xclip
+        success "xclip installed"
+        clipboard_installed=true
+    else
+        success "xclip already installed"
+        clipboard_installed=true
+    fi
 
-    success "wl-clipboard installed"
+    if [[ "$clipboard_installed" == true ]]; then
+        success "Clipboard support ready for tmux-yank"
+    fi
+}
+
+# Detect the appropriate clipboard command for the current environment
+detect_clipboard_command() {
+    if [[ "$OS_TYPE" == "darwin" ]]; then
+        # macOS uses pbcopy/pbpaste natively (tmux-yank handles this automatically)
+        echo ""
+    elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command_exists wl-copy; then
+        # Wayland session with wl-clipboard
+        echo "wl-copy"
+    elif [[ -n "${DISPLAY:-}" ]] && command_exists xclip; then
+        # X11 session with xclip
+        echo "xclip -selection clipboard -in"
+    elif [[ -n "${DISPLAY:-}" ]] && command_exists xsel; then
+        # X11 session with xsel fallback
+        echo "xsel --clipboard --input"
+    elif command_exists wl-copy; then
+        # Wayland available but WAYLAND_DISPLAY not set (e.g., in tmux over SSH)
+        echo "wl-copy"
+    elif command_exists xclip; then
+        # Generic fallback to xclip
+        echo "xclip -selection clipboard -in"
+    else
+        echo ""
+    fi
 }
 
 ################################################################################
@@ -415,6 +459,9 @@ fi
 zinit wait lucid light-mode for \
     zsh-users/zsh-history-substring-search
 
+# History settings (Share across the session)
+export HISTFILE=
+
 # Bind up/down arrows to history substring search (search history based on typed prefix)
 bindkey '^[[A' history-substring-search-up
 bindkey '^[[B' history-substring-search-down
@@ -501,7 +548,22 @@ deploy_tmux_conf() {
 
     backup_file "$HOME/.tmux.conf"
 
-    cat > "$HOME/.tmux.conf" << 'TMUX_EOF'
+    # Detect clipboard command for current environment
+    local clipboard_command
+    clipboard_command=$(detect_clipboard_command)
+    
+    log "Clipboard command detected: ${clipboard_command:-"auto-detect (macOS/native)"}"
+
+    # Build clipboard configuration section
+    local clipboard_config=""
+    if [[ -n "$clipboard_command" ]]; then
+        clipboard_config="
+# Clipboard integration (auto-detected for $OS_TYPE)
+set -g @custom_copy_command '$clipboard_command'
+"
+    fi
+
+    cat > "$HOME/.tmux.conf" << TMUX_EOF
 new-session
 
 set-option -g default-shell /bin/zsh
@@ -527,6 +589,10 @@ set -g @plugin 'tmux-plugins/tmux-continuum'
 set -g @plugin 'tmux-plugins/tmux-resurrect'
 set -g @plugin 'tmux-plugins/tmux-yank'
 
+# Ensure shell loads profile configs
+set -g default-command "exec zsh -l"
+
+$clipboard_config
 # Plugins configuration
 set -g @continuum-boot 'on'
 set -g @continuum-restore 'on'
@@ -545,6 +611,7 @@ set -g status-left "#{session_name} "
 set -g status-left-length 50
 set -g status-right " %a %d %b %H:%M "
 set -g status-right-length 30
+
 # Initialize TMUX plugin manager (keep this as the last line of .tmux.conf)!!!
 run '~/.tmux/plugins/tpm/tpm'
 TMUX_EOF

@@ -337,23 +337,44 @@ run-shell ~/.tmux/plugins/tmux-resurrect/scripts/restore.sh
 
 ---
 
-#### ❌ Copy/paste not working in tmux
+#### ✅ Copy/paste integration (tmux-yank)
 
-**Problem:** tmux-yank not configured properly
+**Status:** ✅ **FIXED** - System clipboard integration now works out of the box!
 
-**Solutions:**
+**How it works:**
+The setup script automatically detects your display server and configures the appropriate clipboard tool:
+- **macOS:** Native pbcopy/pbpaste (no dependencies)
+- **Linux Wayland:** wl-copy (wl-clipboard package)
+- **Linux X11:** xclip (xclip package)
+- **Linux generic:** Uses available tool (prefers wl-copy, falls back to xclip)
+
+**Installation:**
 ```bash
-# Manual copy to clipboard
-tmux show-buffer | pbcopy  # macOS
-tmux show-buffer | xclip   # Linux (need xclip)
+# Both packages are automatically installed by setup.sh on Ubuntu
+sudo apt install -y wl-clipboard xclip  # Manual install if needed
+```
 
-# For Linux, install xclip
-sudo apt install -y xclip  # Ubuntu
-sudo dnf install -y xclip  # Fedora
-sudo pacman -S xclip       # Arch
+**Usage:**
+1. Enter copy mode: `Prefix + [`
+2. Start selection: `Space` or `v`
+3. Select text with arrow keys
+4. Copy to clipboard: `Enter` or `y` (copies to system clipboard!)
+5. Paste anywhere: `Prefix + ]` or use system paste (Ctrl+V/Cmd+V)
 
-# Reload tmux
+**Troubleshooting:**
+If it's not working after setup:
+```bash
+# 1. Reload tmux
 tmux source ~/.tmux.conf
+
+# 2. Verify clipboard tool is installed
+which wl-copy xclip pbcopy
+
+# 3. Check environment variables
+echo $WAYLAND_DISPLAY $DISPLAY
+
+# 4. Re-run setup to regenerate config with proper detection
+./setup.sh
 ```
 
 ---
