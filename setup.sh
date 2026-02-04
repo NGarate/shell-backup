@@ -195,7 +195,7 @@ install_core_tools() {
         # Ubuntu/Debian via apt
         log "Installing tools via apt..."
         sudo apt-get install -y -qq zsh tmux git curl build-essential fontconfig
-        sudo apt-get install -y -qq fzf zoxide ripgrep fd-find wl-clipboard 2>/dev/null || true
+        sudo apt-get install -y -qq fzf zoxide ripgrep fd-find wl-clipboard command-not-found 2>/dev/null || true
     fi
 
     success "Core tools installed"
@@ -388,8 +388,20 @@ zinit light junegunn/fzf
 # Node.js support - automatically load nvm when entering a node project
 zinit snippet OMZP::node
 
-# Command not found helper - suggests installed packages
-zinit snippet OMZP::command-not-found
+# pnpm support - aliases and completions
+zinit snippet OMZP::pnpm
+
+# Command not found helper - suggests packages for missing commands
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    zinit snippet OMZP::command-not-found
+else
+    # Linux: Use system command-not-found
+    if [[ -f /usr/lib/command-not-found ]]; then
+        command_not_found_handler() {
+            /usr/lib/command-not-found -- "$1" || return 127
+        }
+    fi
+fi
 
 # ============================================================================
 # Optional/Secondary Plugins (turbo mode for faster startup)
@@ -403,6 +415,10 @@ zinit wait lucid light-mode for \
 zinit wait lucid for \
     OMZP::tmux \
     OMZP::alias-finder
+
+# You Should Use - reminds you of existing aliases
+zinit wait lucid light-mode for \
+    MichaelAquilina/zsh-you-should-use
 
 # ============================================================================
 # User Configuration
@@ -431,22 +447,9 @@ eval "$(starship init zsh)"
 # pnpm
 export PNPM_HOME="PNPM_HOME_PLACEHOLDER"
 case ":$PATH:" in
-  *":$PNPM_HOME:"*) ;;
+  *":$PNPM_HOME:") ;;
   *) export PATH="$PNPM_HOME:$PATH" ;;
 esac
-
-# pnpm aliases
-alias p="pnpm"
-alias pa="pnpm add"
-alias pad="pnpm add -D"
-alias pin="pnpm install"
-alias pr="pnpm remove"
-alias prd="pnpm remove -D"
-alias pup="pnpm update"
-alias ps="pnpm start"
-alias pt="pnpm test"
-alias pb="pnpm build"
-alias pnpm:latest="pnpm add -g pnpm@latest"
 
 # bun completions
 [ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"
@@ -523,17 +526,15 @@ set -g @resurrect-capture-pane-contents 'on'
 
 # Custom status bar
 set -g status-style fg=white,bg=#265BCA
-set -g window-status-format "[#I]:#W"
+set -g window-status-format " [#I]: #W "
+set -g window-status-current-format " [#I]: #W "
 setw -g window-status-style fg=white,bg=#265BCA
 setw -g window-status-current-style fg=black,bg=#E8DB57
 setw -g window-status-separator "|"
 set -g status-position bottom
 set -g status-interval 1
-set -g status-left "#{session_name}"
+set -g status-left "#{session_name} "
 set -g status-left-length 50
-set -g status-right ""
-set -g status-justify left
-
 # Initialize TMUX plugin manager (keep this as the last line of .tmux.conf)!!!
 run '~/.tmux/plugins/tpm/tpm'
 TMUX_EOF
@@ -565,11 +566,6 @@ font-feature = +calt
 # Session recovery - Ghostty restores UI state (windows/tabs/splits)
 window-save-state = always
 shell-integration = detect
-
-# Remove window padding to maximize usable space
-window-padding-x = 0
-window-padding-y = 0
-window-padding-balance = false
 
 # macOS specific
 font-thicken = true
@@ -701,20 +697,25 @@ setup_nvm() {
 setup_zinit_plugins() {
     log "Setting up Zinit plugins..."
 
-    # Source the new zshrc to load Zinit
-    export ZDOTDIR="$HOME"
-    source "$HOME/.zshrc" 2>/dev/null || true
-
-    # Give Zinit time to initialize
-    sleep 2
-
-    if command_exists zinit; then
-        log "Running zinit report..."
-        zinit report 2>/dev/null || true
-        success "Zinit plugins loaded"
-    else
-        warning "Zinit not yet initialized, will load on next shell session"
+    # First, ensure zinit is installed
+    if [[ ! -f $HOME/.local/share/zinit/zinit.git/zinit.zsh ]]; then
+        log "Installing Zinit plugin manager..."
+        command mkdir -p "$HOME/.local/share/zinit" && command chmod g-rwX "$HOME/.local/share/zinit"
+        command git clone https://github.com/zdharma-continuum/zinit "$HOME/.local/share/zinit/zinit.git"
     fi
+
+    # Run zsh to download and install all plugins
+    log "Installing plugins (this may take a minute)..."
+    zsh -c "
+        source '$HOME/.local/share/zinit/zinit.git/zinit.zsh'
+        source '$HOME/.zshrc'
+        # Wait for turbo-loaded plugins
+        sleep 3
+        # Force update to ensure all are installed
+        zinit update --all --parallel -q 2>/dev/null || true
+    " || true
+
+    success "Zinit plugins installed"
 }
 
 ################################################################################
@@ -945,7 +946,7 @@ print_summary() {
 Installed Components:
   ✓ zsh (default shell)
   ✓ Zinit plugin manager (9 plugins)
-  ✓ tmux with 5 plugins
+  ✓ tmux with 6 plugins
   ✓ Ghostty terminal (with session recovery)
   ✓ Starship modern prompt
   ✓ fzf, zoxide, ripgrep, fd
@@ -1001,7 +1002,6 @@ main() {
     install_fonts || true
 
     deploy_zshrc
-    setup_tmux_plugins
     deploy_tmux_conf
     deploy_ghostty_config
     deploy_starship_config
@@ -1010,6 +1010,7 @@ main() {
     setup_shell
     setup_nvm
     setup_zinit_plugins
+    setup_tmux_plugins
     setup_auto_update
 
     verify_installation
