@@ -358,6 +358,80 @@ tmux source ~/.tmux.conf
 
 ---
 
+#### ❌ Config changes not appearing after reload
+
+**Problem:** You ran `tmux source ~/.tmux.conf` but don't see the changes
+
+**Cause:** The reload command only affects certain settings in the current session. Some settings only take effect in new sessions.
+
+**Solutions:**
+```bash
+# Method 1: Reload (works for most settings)
+tmux source ~/.tmux.conf
+
+# Method 2: Detach and reattach (recommended for complete refresh)
+# Inside tmux:
+Ctrl+A D                    # Detach
+# In terminal:
+tmux attach                 # Reattach with fresh config
+
+# Method 3: Kill session and create new (complete reset)
+tmux kill-session -t main   # Kill your session
+tmux new -s main            # Create new session
+
+# Method 4: For all sessions, reload each one
+tmux list-sessions          # List all sessions
+tmux source ~/.tmux.conf -t <session-name>  # Reload specific session
+```
+
+**Note:** Status bar changes should show immediately after `tmux source ~/.tmux.conf`. If not, try Method 2 or 3 above.
+
+---
+
+#### ❌ Status bar not showing date/time or wrong format
+
+**Problem:** The status-right configuration isn't applied or shows wrong format
+
+**Solutions:**
+```bash
+# Check current status bar configuration
+tmux show -g status-right
+
+# Reload tmux configuration
+tmux source ~/.tmux.conf
+
+# Verify the config file has the status-right line
+grep "status-right" ~/.tmux.conf
+
+# Should show: set -g status-right " %a %d %b %H:%M "
+
+# If missing, add it manually:
+echo 'set -g status-right " %a %d %b %H:%M "' >> ~/.tmux.conf
+echo 'set -g status-right-length 30' >> ~/.tmux.conf
+tmux source ~/.tmux.conf
+```
+
+**To customize the format:**
+```bash
+# Edit ~/.tmux.conf and change the status-right line:
+
+# Format codes:
+# %a = abbreviated weekday name (Mon, Tue, etc.)
+# %d = day of month (01-31)
+# %b = abbreviated month name (Jan, Feb, etc.)
+# %H = hour (24-hour format, 00-23)
+# %M = minute (00-59)
+# %I = hour (12-hour format)
+# %p = AM/PM
+
+# Examples:
+set -g status-right " %a %d %b %H:%M "     # Wed 04 Feb 14:30 (default)
+set -g status-right " %a %m/%d %I:%M %p "  # Wed 02/04 02:30 PM
+set -g status-right " %Y-%m-%d %H:%M:%S "  # 2026-02-04 14:30:45
+```
+
+---
+
 ### Node/Package Manager Issues
 
 #### ❌ "command not found: node" or nvm not working
