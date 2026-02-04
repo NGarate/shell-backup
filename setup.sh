@@ -278,9 +278,13 @@ install_fonts() {
     fi
     mkdir -p "$font_dir"
 
-    # Check if JetBrains Mono is already installed
-    if ls "$font_dir"/JetBrainsMono*.ttf &>/dev/null 2>&1 || \
-       ls "$font_dir"/JetBrainsMono*.otf &>/dev/null 2>&1; then
+    # Check if JetBrains Mono is already installed (handle empty glob in zsh)
+    local font_exists=false
+    if [[ -n $(find "$font_dir" -maxdepth 1 -name "JetBrainsMono*.ttf" -o -name "JetBrainsMono*.otf" 2>/dev/null) ]]; then
+        font_exists=true
+    fi
+    
+    if [[ "$font_exists" == true ]]; then
         success "JetBrains Mono already installed"
         return 0
     fi
@@ -895,20 +899,18 @@ verify_installation() {
 
     # Check fonts
     checks_total=$((checks_total + 1))
+    local font_dir_check
     if [[ "$OS_TYPE" == "darwin" ]]; then
-        if ls "$HOME/Library/Fonts"/JetBrainsMono*.{ttf,otf} &>/dev/null 2>&1; then
-            success "JetBrains Mono installed"
-            checks_passed=$((checks_passed + 1))
-        else
-            warning "JetBrains Mono not found"
-        fi
+        font_dir_check="$HOME/Library/Fonts"
     else
-        if ls "$HOME/.local/share/fonts"/JetBrainsMono*.{ttf,otf} &>/dev/null 2>&1; then
-            success "JetBrains Mono installed"
-            checks_passed=$((checks_passed + 1))
-        else
-            warning "JetBrains Mono not found"
-        fi
+        font_dir_check="$HOME/.local/share/fonts"
+    fi
+    
+    if [[ -n $(find "$font_dir_check" -maxdepth 1 \( -name "JetBrainsMono*.ttf" -o -name "JetBrainsMono*.otf" \) 2>/dev/null) ]]; then
+        success "JetBrains Mono installed"
+        checks_passed=$((checks_passed + 1))
+    else
+        warning "JetBrains Mono not found"
     fi
 
     # Check Ghostty
