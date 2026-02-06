@@ -702,58 +702,51 @@ rg --version
 
 #### ❌ Plugins not updating automatically
 
-**Problem:** LaunchAgent/Systemd timer not running
+**Problem:** Auto-update not running when opening new shell
 
 **Solutions:**
 
-**macOS:**
+The auto-update runs once per day when you open a new shell. It uses a timestamp file at `~/.zinit-last-update`.
+
+**Force an update:**
 ```bash
-# Check LaunchAgent loaded
-launchctl list | grep zinit
+# Remove the timestamp file to trigger update on next shell start
+rm ~/.zinit-last-update
 
-# Load if not running
-launchctl load ~/Library/LaunchAgents/com.ngarate.zinit-update.plist
-
-# Check logs
-tail -f /tmp/zinit-update.log
-
-# Check next scheduled run
-launchctl list | grep zinit
+# Or manually update
+zinit self-update
+zinit update --all
 ```
 
-**Linux:**
+**Check if updates are working:**
 ```bash
-# Check Systemd timer
-systemctl --user list-timers | grep zinit
+# Check timestamp file
+ls -la ~/.zinit-last-update
 
-# Enable if not running
-systemctl --user enable zinit-update.timer
-systemctl --user start zinit-update.timer
+# View last update time
+stat ~/.zinit-last-update
 
-# Check logs
-journalctl --user -u zinit-update -f
-
-# Check next scheduled run
-systemctl --user list-timers zinit-update.timer
+# Manual update to test
+zinit update --all
 ```
 
 ---
 
-#### ❌ Update errors in logs
+#### ❌ "Multiple Snippet not loaded" error
 
-**Problem:** Network or permission issues during update
+**Problem:** This error occurs when Zinit tries to load the same OMZP snippet multiple times
 
 **Solutions:**
 ```bash
-# Manual update
-zinit update --all
-
-# Clear cache if corrupted
+# Clear zinit cache
 rm -rf ~/.cache/zinit/*
 
 # Re-initialize zinit
 zinit self-update
 zinit update --all
+
+# If problem persists, restart shell
+exec zsh
 ```
 
 ---
@@ -795,23 +788,6 @@ su -c "./setup.sh"
 
 # Or give user sudo access (requires admin)
 # Contact your system administrator
-```
-
----
-
-#### Linux: ❌ systemd timer not working (non-systemd systems)
-
-**Problem:** System uses OpenRC (Alpine) or other init
-
-**Solutions:**
-- Alpine Linux is not fully supported
-- Use cron instead:
-```bash
-# Add to crontab
-crontab -e
-
-# Add line:
-0 2 * * * /home/user/.local/bin/zinit update --all >> /tmp/zinit-update.log 2>&1
 ```
 
 ---
@@ -867,7 +843,7 @@ cp ~/.tmux.conf ~/.tmux.conf.backup
 rm ~/.zshrc ~/.zshenv ~/.tmux.conf ~/.config/starship.toml ~/.zsh/gcof.zsh 2>/dev/null
 
 # Remove plugin managers
-rm -rf ~/.local/share/zinit ~/.tmux/plugins ~/.config/systemd/user/zinit-update.* 2>/dev/null
+rm -rf ~/.local/share/zinit ~/.tmux/plugins 2>/dev/null
 
 # Reinstall
 ./setup.sh
