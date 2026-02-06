@@ -12,7 +12,6 @@ set -euo pipefail
 # 1. CONFIGURATION & CONSTANTS
 ################################################################################
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SETUP_LOG="${HOME}/.setup.log"
 readonly BACKUP_DIR="${HOME}/.backup"
 readonly TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -734,31 +733,231 @@ deploy_starship_config() {
 
     mkdir -p "$HOME/.config"
 
-    # Copy starship config from script directory or create embedded version
-    if [[ -f "$SCRIPT_DIR/starship.toml" ]]; then
-        cp "$SCRIPT_DIR/starship.toml" "$HOME/.config/starship.toml"
-        success "Starship config copied from script directory"
-    else
-        # Create a minimal starship config (user can enhance later)
-        cat > "$HOME/.config/starship.toml" << 'STARSHIP_EOF'
-add_newline = false
-command_timeout = 2000
+    cat > "$HOME/.config/starship.toml" << 'STARSHIP_EOF'
+format = """\
+[╭╴](fg:arrow)\
+$os\
+$directory\
+(\
+    $git_branch\
+    $git_status\
+)\
+$cmd_duration\
+$fill\
+[$battery](fg:text_color)\
+[$java](fg:text_color)\
+[$nodejs](fg:text_color)\
+[$python](fg:text_color)\
+[$conda](fg:text_color)\
+[$rust](fg:text_color)\
+[$golang](fg:text_color)\
+[$bun](fg:text_color)\
+[$docker_context](fg:text_color)
+[╰─](fg:arrow)$character"""
 
-format = """
-$directory$character
-"""
+add_newline = true
 
-[directory]
-truncate_to_repo = true
-format = "[ $path ]($style)"
-style = "bold blue"
+palette = "old"
+
+[palettes.old]
+arrow = "#FFFFFF"
+os = "#3778BF"
+directory = "#3F37C9"
+node = "#417E38"
+bun = "#FF4089"
+time = "#177E89"
+git = "#B02B10"
+git_status = "#8B1D2C"
+python = "#3776AB"
+conda = "#3EB049"
+java = "#861215"
+rust = "#C33C00"
+clang = "#00599D"
+duration = "#3D3D3D"
+text_color = "#EDF2F4"
+text_light = "#EDF2F4"
+
+[palettes.normal]
+arrow = "#FFFFFF"
+os = "#2C3032"
+directory = "#363C3E"
+time = "#474D5C"
+node = "#417E38"
+bun = "#FF4089"
+git = "#D0DBDA"
+git_status = "#DFEBED"
+python = "#F5CB5C"
+conda = "#3EB049"
+java = "#861215"
+rust = "#C33C00"
+clang = "#00599D"
+duration = "#F4FBFF"
+text_color = "#EDF2F4"
+text_light = "#26272A"
+
+[palettes.light]
+arrow = "#FFFFFF"
+os = "#F7768E"
+directory = "#FF9578"
+time = "#FFDC72"
+git = "#F5F5F5"
+git_status = "#72FFD5"
+clang = "#67E3FF"
+java = "#FF52A3"
+python = "#B4F9F8"
+node = "#417E38"
+bun = "#FF4089"
+conda = "#BAF5C0"
+duration = "#91FFE7"
+text_color = "#26272A"
+text_light = "#26272A"
 
 [character]
-success_symbol = "[❯](bold green)"
-error_symbol = "[❯](bold red)"
+success_symbol = "[󰍟](fg:arrow)"
+error_symbol = "[󰍟](fg:red)"
+
+[directory]
+format = " [](fg:directory)[  $path ]($style)[$read_only]($read_only_style)[](fg:directory)"
+truncation_length = 2
+style = "fg:text_color bg:directory"
+read_only_style = "fg:text_color bg:directory"
+before_repo_root_style = "fg:text_color bg:directory"
+truncation_symbol = "…/"
+truncate_to_repo = true
+read_only ="  "
+
+[time]
+disabled = false
+format = " [](fg:time)[ $time]($style)[](fg:time)"
+time_format = "%H:%M"
+style = "fg:text_color bg:time"
+
+[cmd_duration]
+format = " [](fg:duration)[ $duration]($style)[](fg:duration)"
+style = "fg:text_light bg:duration"
+min_time = 500
+
+[fill]
+symbol = " "
+
+[git_branch]
+format = " [](fg:git)[$symbol$branch](fg:text_light bg:git)[](fg:git)"
+symbol = " "
+
+[git_status]
+format = '([ ](fg:git_status)[ $all_status$ahead_behind ]($style)[](fg:git_status))'
+style = "fg:text_light bg:git_status"
+
+[docker_context]
+disabled=true
+symbol = " "
+
+[package]
+disabled=true
+
+[java]
+format = "[ ](fg:java)[$symbol$version](bg:java fg:text_color)[](fg:java)"
+version_format = "${raw}"
+symbol = " "
+disabled = false
+
+[nodejs]
+format = "[ ](fg:node)[$symbol$version]($style)[](fg:node)"
+style = "bg:node fg:text_light"
+symbol = " "
+version_format = "${raw}"
+disabled = false
+
+[rust]
+format = "[ ](fg:rust)[$symbol$version](bg:rust fg:text_color)[](fg:rust)"
+symbol = " "
+version_format = "${raw}"
+disabled = false
+
+[python]
+disabled = false
+format = '[ ](fg:python)[${symbol}${pyenv_prefix}(${version} )(\($virtualenv\))]($style)[](fg:python)'
+symbol = " "
+version_format = "${raw}"
+style = "fg:text_light bg:python"
+
+[conda]
+format = "[ ](fg:conda)[$symbol$environment]($style)[](fg:conda)"
+style = "bg:conda fg:text_color"
+ignore_base = false
+disabled = false
+symbol = " "
+
+[golang]
+format = "[ ](fg:clang)[$symbol($version(-$name) )](bg:clang fg:text_color)[](fg:clang)"
+symbol = " "
+version_format = "${raw}"
+disabled = false
+
+[bun]
+format = "[ ](fg:bun)[$symbol$version](bg:bun fg:text_color)[](fg:bun)"
+symbol = "🫓 "
+version_format = "${raw}"
+disabled = false
+
+[battery]
+full_symbol = "󰁹 "
+charging_symbol = "󰢝 "
+discharging_symbol = "󰁼 "
+unknown_symbol = "󰂑 "
+empty_symbol = "󰂎 "
+disabled = false
+format = "[$symbol$percentage]($style)"
+
+[[battery.display]]
+threshold = 10
+style = "bold red"
+
+[[battery.display]]
+threshold = 30
+style = "bold yellow"
+
+[[battery.display]]
+threshold = 100
+style = "bold green"
+
+[os]
+disabled = false
+format = "[](fg:os)[$symbol](bg:os fg:text_color)[](fg:os)"
+
+[os.symbols]
+Alpine = ""
+Amazon = ""
+Android = ""
+Arch = ""
+CentOS = ""
+Debian = ""
+DragonFly = ""
+Emscripten = ""
+EndeavourOS = ""
+Fedora = ""
+FreeBSD = ""
+Gentoo = ""
+Linux = ""
+Macos = ""
+Manjaro = ""
+Mariner = ""
+MidnightBSD = ""
+Mint = ""
+NetBSD = ""
+NixOS = ""
+openSUSE = ""
+Pop = ""
+Raspbian = ""
+Redhat = ""
+RedHatEnterprise = ""
+Redox = ""
+SUSE = ""
+Ubuntu = ""
+Unknown = ""
+Windows = ""
 STARSHIP_EOF
-        success "Minimal Starship config created"
-    fi
+    success "Starship config deployed"
 }
 
 ################################################################################
@@ -770,13 +969,7 @@ deploy_custom_functions() {
 
     mkdir -p "$HOME/.zsh"
 
-    # Copy gcof.zsh from script directory or create placeholder
-    if [[ -f "$SCRIPT_DIR/.zsh/gcof.zsh" ]]; then
-        cp "$SCRIPT_DIR/.zsh/gcof.zsh" "$HOME/.zsh/gcof.zsh"
-        success "gcof.zsh function deployed"
-    else
-        warning "gcof.zsh not found in script directory, creating placeholder"
-        cat > "$HOME/.zsh/gcof.zsh" << 'GCOF_EOF'
+    cat > "$HOME/.zsh/gcof.zsh" << 'GCOF_EOF'
 # gcof - Git Checkout Fuzzy
 # Fuzzy find and checkout git branches
 gcof() {
@@ -784,7 +977,7 @@ gcof() {
     branch=$(git branch --all | grep -v HEAD | sed 's/^..//' | fzf --preview 'git log -n 20 --oneline {}' | sed 's/.*\///') && git checkout "$branch"
 }
 GCOF_EOF
-    fi
+    success "gcof.zsh function deployed"
 }
 
 ################################################################################

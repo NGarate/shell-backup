@@ -5,7 +5,7 @@ A unified, cross-platform automation script that replicates a complete professio
 ## Quick Start
 
 ```bash
-# Download and run
+# One-liner (recommended) - works via curl piping
 curl -fsSL https://raw.githubusercontent.com/ngarate/shell-backup/main/setup.sh | bash
 
 # Or clone and run locally
@@ -14,6 +14,8 @@ cd shell-backup
 chmod +x setup.sh
 ./setup.sh
 ```
+
+> **Note:** The script is fully self-contained - all configuration files are embedded, so it works seamlessly when piped via curl.
 
 ## Quick Reference
 
@@ -248,7 +250,7 @@ The setup script:
 2. Installs/updates package managers (Homebrew, apt)
 3. Installs zsh, tmux, starship, and 10+ dev tools
 4. Downloads and installs JetBrains Mono font
-5. Creates/deploys configuration files
+5. Deploys embedded configuration files (.zshrc, .tmux.conf, starship.toml)
 6. Initializes Zinit and installs plugins
 7. Sets up tmux plugin manager and plugins
 8. Configures auto-update on shell startup (once per day)
@@ -257,10 +259,12 @@ The setup script:
 
 **Key features:**
 
-- ✅ Idempotent - Safe to run multiple times
-- ✅ Error recovery - Shows what failed, lets you fix and re-run
-- ✅ Backup strategy - Backs up existing configs before overwriting
-- ✅ Platform aware - Different paths for macOS vs Linux
+- ✅ **Self-contained** - All configs embedded, single file deployment
+- ✅ **Curl-friendly** - Works seamlessly when piped via curl
+- ✅ **Idempotent** - Safe to run multiple times
+- ✅ **Error recovery** - Shows what failed, lets you fix and re-run
+- ✅ **Backup strategy** - Backs up existing configs before overwriting
+- ✅ **Platform aware** - Different paths for macOS vs Linux
 
 ## Installation Time
 
