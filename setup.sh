@@ -435,9 +435,6 @@ zinit light junegunn/fzf
 # Node.js support - automatically load nvm when entering a node project
 zinit snippet OMZP::node
 
-# pnpm support - aliases and completions
-zinit light ntnyq/omz-plugin-pnpm
-
 # Command not found helper - suggests packages for missing commands
 if [[ "$(uname -s)" == "Darwin" ]]; then
     zinit snippet OMZP::command-not-found
@@ -479,7 +476,9 @@ zinit wait lucid for \
     OMZP::alias-finder
 
 # You Should Use - reminds you of existing aliases
+# pnpm support - aliases and completions (lazy loaded)
 zinit wait lucid light-mode for \
+    ntnyq/omz-plugin-pnpm \
     MichaelAquilina/zsh-you-should-use
 
 # ============================================================================
