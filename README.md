@@ -23,15 +23,18 @@ chmod +x setup.sh
 ## What Gets Installed
 
 ### Shell & Configuration
+
 - **zsh** - Modern shell with Zinit plugin manager (9 plugins)
 - **Starship** - Fast, customizable shell prompt
 - **Custom functions** - Git fuzzy checkout (`gcof`), aliases, and utilities
 
 ### Terminal & Multiplexing
+
 - **tmux** - Terminal multiplexer with session management (6 plugins)
 - **Ghostty** - GPU-accelerated terminal emulator with session recovery
 
 ### Developer Tools
+
 - **fzf** - Fuzzy finder for files and commands
 - **zoxide** - Smarter `cd` command with frecency
 - **ripgrep (rg)** - Fast text search
@@ -40,10 +43,12 @@ chmod +x setup.sh
 - **pnpm** - Fast, disk-efficient package manager
 
 ### Fonts & Theme
+
 - **JetBrains Mono** - Beautiful monospace font
 - **Starship theme** - Custom prompt with git integration
 
 ### Productivity Features
+
 - **Auto-save/restore tmux sessions** - Via tmux-resurrect + continuum
 - **Auto-update plugins** - Updates once per day when you open a new shell
 - **Clipboard integration** - tmux-yank for copy/paste
@@ -52,12 +57,14 @@ chmod +x setup.sh
 ## System Requirements
 
 ### Minimum
+
 - **macOS 10.15+** (Intel or Apple Silicon) or **Ubuntu 20.04+**
 - **curl** or **wget**
 - **git**
 - **~500MB** disk space
 
 ### Recommended
+
 - **macOS 12+** or **Ubuntu 22.04+**
 - **2GB+ RAM**
 
@@ -131,24 +138,28 @@ fd "*.ts"    # Find TypeScript files
 ### Customize After Installation
 
 **Edit shell config:**
+
 ```bash
 vim ~/.zshrc
 source ~/.zshrc  # Reload
 ```
 
 **Edit prompt theme:**
+
 ```bash
 vim ~/.config/starship.toml
 exec zsh  # Reload
 ```
 
 **Edit tmux config:**
+
 ```bash
 vim ~/.tmux.conf
 tmux source ~/.tmux.conf  # Reload configuration
 ```
 
 **Important:** Config reload only affects the current session. For a fresh start:
+
 ```bash
 # Detach and reattach
 Ctrl+A D                    # Detach from session
@@ -160,6 +171,7 @@ tmux new                    # Create new session
 ```
 
 **Customize status bar:**
+
 ```bash
 # Change date/time format (default: Day DD Mon HH:MM)
 set -g status-right " %a %d %b %H:%M "
@@ -171,6 +183,7 @@ set -g status-right " %a %d %b %H:%M "
 ```
 
 **Add your own aliases:**
+
 ```bash
 # Add to ~/.zshrc before the last line
 alias myalias="my command"
@@ -204,6 +217,7 @@ starship self update
 ## Troubleshooting
 
 See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for:
+
 - Plugins not loading
 - Font display issues
 - SSH key errors
@@ -229,6 +243,7 @@ cd ~/.tmux/plugins/tpm && ./bin/install_plugins
 ## How It Works
 
 The setup script:
+
 1. Detects your OS and architecture
 2. Installs/updates package managers (Homebrew, apt)
 3. Installs zsh, tmux, starship, and 10+ dev tools
@@ -241,6 +256,7 @@ The setup script:
 10. Prints summary with next steps
 
 **Key features:**
+
 - ✅ Idempotent - Safe to run multiple times
 - ✅ Error recovery - Shows what failed, lets you fix and re-run
 - ✅ Backup strategy - Backs up existing configs before overwriting
@@ -269,6 +285,7 @@ Found a bug? Want to add a feature?
 ### Testing Checklist
 
 Before submitting a PR, verify on your OS:
+
 - [ ] Script runs without errors
 - [ ] All plugins load (check with `zinit list`)
 - [ ] Tmux plugins load (check with `Ctrl+A U`)
