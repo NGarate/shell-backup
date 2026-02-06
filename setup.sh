@@ -180,14 +180,26 @@ install_core_tools() {
 
     if [[ "$OS_TYPE" == "darwin" ]]; then
         # macOS via Homebrew
-        local tools=(zsh tmux starship fzf zoxide ripgrep fd)
-        for tool in "${tools[@]}"; do
-            if command_exists "$tool"; then
-                success "$tool already installed"
+        # Format: "package_name:command_name" - if no colon, command_name = package_name
+        local tools=("zsh" "tmux" "starship" "fzf" "zoxide" "ripgrep:rg" "fd:fd")
+        for tool_mapping in "${tools[@]}"; do
+            local package_name
+            local command_name
+
+            if [[ "$tool_mapping" == *":"* ]]; then
+                package_name="${tool_mapping%%:*}"
+                command_name="${tool_mapping##*:}"
             else
-                log "Installing $tool..."
-                brew install "$tool"
-                success "$tool installed"
+                package_name="$tool_mapping"
+                command_name="$tool_mapping"
+            fi
+
+            if command_exists "$command_name"; then
+                success "$package_name already installed"
+            else
+                log "Installing $package_name..."
+                brew install "$package_name"
+                success "$package_name installed"
             fi
         done
     else
@@ -1048,13 +1060,13 @@ setup_zinit_plugins() {
     # Run zsh to download and install all plugins
     log "Installing plugins (this may take a minute)..."
     zsh -c "
-        source '$HOME/.local/share/zinit/zinit.git/zinit.zsh'
-        source '$HOME/.zshrc'
+        source '$HOME/.local/share/zinit/zinit.git/zinit.zsh' 2>/dev/null
+        source '$HOME/.zshrc' 2>/dev/null
         # Wait for turbo-loaded plugins
         sleep 3
-        # Force update to ensure all are installed
+        # Force update to ensure all are installed (suppress compile hook warnings)
         zinit update --all --parallel -q 2>/dev/null || true
-    " || true
+    " 2>/dev/null || true
 
     success "Zinit plugins installed"
 }
