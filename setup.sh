@@ -421,8 +421,7 @@ export NVM_DIR="$HOME/.nvm"
 # Core Plugins (loaded immediately for essential functionality)
 # ============================================================================
 
-# Git integration from OMZ
-zinit snippet OMZP::git
+
 
 # Autosuggestions - show command completions based on history
 zinit light zsh-users/zsh-autosuggestions
@@ -459,8 +458,14 @@ fi
 zinit wait lucid light-mode for \
     zsh-users/zsh-history-substring-search
 
-# History settings (Share across the session)
-export HISTFILE=
+# History settings (Share across sessions)
+export HISTFILE="$HOME/.zsh_history"
+export HISTSIZE=100000
+export SAVEHIST=100000
+setopt SHARE_HISTORY
+setopt HIST_IGNORE_ALL_DUPS
+setopt HIST_IGNORE_SPACE
+setopt HIST_REDUCE_BLANKS
 
 # Bind up/down arrows to history substring search (search history based on typed prefix)
 bindkey '^[[A' history-substring-search-up
@@ -469,6 +474,8 @@ bindkey '^[[B' history-substring-search-down
 # Tmux integration - session management helpers (lazy loaded)
 zinit wait lucid for \
     OMZP::tmux \
+    OMZP::bun \
+    OMZP::git \
     OMZP::alias-finder
 
 # You Should Use - reminds you of existing aliases
@@ -520,10 +527,35 @@ export PATH="$HOME/.local/bin:$PATH"
 # Environment Variables
 # ============================================================================
 
-# Read .env files if exists
-if [[ -f ~/.env ]]; then
-    export $(cat ~/.env | xargs)
-fi
+# Load .env files from home directory
+# Priority: .env first, then all .env.* files
+load_env_files() {
+    local env_file
+    
+    # Load .env first (base configuration)
+    if [[ -f ~/.env ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            # Skip comments and empty lines
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$line" ]] && continue
+            # Export the variable
+            export "$line" 2>/dev/null || true
+        done < ~/.env
+    fi
+    
+    # Load all .env.* files (including .env.local, .env.production, etc.)
+    for env_file in ~/.env.*; do
+        [[ -f "$env_file" ]] || continue
+        
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$line" ]] && continue
+            export "$line" 2>/dev/null || true
+        done < "$env_file"
+    done
+}
+
+load_env_files
 
 # ============================================================================
 # Tmux Auto-attach (Ghostty integration)
@@ -533,6 +565,38 @@ fi
 # Ghostty sets TERM to xterm-ghostty
 if [[ -z "$TMUX" && "$TERM" == xterm-ghostty* ]]; then
     tmux new-session -A -s main
+fi
+
+# ============================================================================
+# Auto-update Zinit plugins (once per day)
+# ============================================================================
+
+# Check for updates once per day using a timestamp file
+local zinit_update_stamp="$HOME/.zinit-last-update"
+local update_interval=$((24 * 60 * 60)) # 24 hours in seconds
+local current_time=$(date +%s)
+local last_update=0
+
+# Get last update time (cross-platform: macOS uses stat -f %m, Linux uses stat -c %Y)
+if [[ -f "$zinit_update_stamp" ]]; then
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        last_update=$(stat -f %m "$zinit_update_stamp" 2>/dev/null || echo 0)
+    else
+        last_update=$(stat -c %Y "$zinit_update_stamp" 2>/dev/null || echo 0)
+    fi
+fi
+
+# Update if more than 24 hours have passed
+if (( current_time - last_update > update_interval )); then
+    # Run updates in background so shell starts immediately
+    (
+        # Update Zinit itself first
+        zinit self-update -q 2>/dev/null
+        # Update all plugins and OMZ snippets
+        zinit update --all -q 2>/dev/null
+        # Mark update as complete
+        touch "$zinit_update_stamp"
+    ) &!
 fi
 ZSHRC_EOF
 
@@ -649,6 +713,9 @@ font-thicken = true
 
 # Fullscreen toggle (platform-specific)
 ${fullscreen_keybind}
+
+# Fix new line for OpenCode
+keybind = shift+enter=text:\x1b\r
 
 # Remove padding
 window-padding-x = 0
@@ -826,102 +893,7 @@ setup_tmux_plugins() {
 }
 
 ################################################################################
-# 14. AUTO-UPDATE SCHEDULING
-################################################################################
-
-setup_auto_update_macos() {
-    log "Setting up auto-update for macOS via LaunchAgent..."
-
-    mkdir -p "$HOME/Library/LaunchAgents"
-
-    cat > "$HOME/Library/LaunchAgents/com.ngarate.zinit-update.plist" << 'PLIST_EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.ngarate.zinit-update</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/bin/zsh</string>
-        <string>-c</string>
-        <string>source ~/.zshrc && zinit update --all --parallel -q</string>
-    </array>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>2</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>/tmp/zinit-update.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/zinit-update.err</string>
-</dict>
-</plist>
-PLIST_EOF
-
-    # Load the LaunchAgent
-    launchctl load "$HOME/Library/LaunchAgents/com.ngarate.zinit-update.plist" 2>/dev/null || {
-        launchctl unload "$HOME/Library/LaunchAgents/com.ngarate.zinit-update.plist" 2>/dev/null || true
-        launchctl load "$HOME/Library/LaunchAgents/com.ngarate.zinit-update.plist"
-    }
-
-    success "LaunchAgent for auto-update installed"
-}
-
-setup_auto_update_linux() {
-    log "Setting up auto-update for Linux via systemd timer..."
-
-    mkdir -p "$HOME/.config/systemd/user"
-
-    cat > "$HOME/.config/systemd/user/zinit-update.service" << 'SERVICE_EOF'
-[Unit]
-Description=Update Zinit plugins daily
-After=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/bin/zsh -c "source ~/.zshrc && zinit update --all --parallel -q"
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=default.target
-SERVICE_EOF
-
-    cat > "$HOME/.config/systemd/user/zinit-update.timer" << 'TIMER_EOF'
-[Unit]
-Description=Daily Zinit plugin updates
-Requires=zinit-update.service
-
-[Timer]
-OnCalendar=*-*-* 02:00:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-TIMER_EOF
-
-    log "Enabling and starting systemd timer..."
-    systemctl --user daemon-reload
-    systemctl --user enable zinit-update.timer
-    systemctl --user start zinit-update.timer
-
-    success "Systemd timer for auto-update installed"
-}
-
-setup_auto_update() {
-    if [[ "$OS_TYPE" == "darwin" ]]; then
-        setup_auto_update_macos
-    else
-        setup_auto_update_linux
-    fi
-}
-
-################################################################################
-# 15. VERIFICATION
+# 14. VERIFICATION
 ################################################################################
 
 verify_installation() {
@@ -1032,7 +1004,7 @@ Installed Components:
   ✓ fzf, zoxide, ripgrep, fd
   ✓ NVM + Node.js LTS
   ✓ JetBrains Mono font
-  ✓ Auto-update scheduled (daily 2:00 AM)
+  ✓ Auto-update on shell startup (once per day)
   ✓ Custom functions (gcof)
 
 Quick Start:
@@ -1046,8 +1018,6 @@ Useful Commands:
   - View plugins: zinit plugins
   - View plugin report: zinit report
   - View tmux status: tmux status-left
-  - View auto-update logs (macOS): tail /tmp/zinit-update.log
-  - View auto-update status (Linux): systemctl --user status zinit-update.timer
 
 Documentation & Logs:
   - Installation log: ~/.setup.log
@@ -1091,7 +1061,6 @@ main() {
     setup_nvm
     setup_zinit_plugins
     setup_tmux_plugins
-    setup_auto_update
 
     verify_installation
     print_summary
