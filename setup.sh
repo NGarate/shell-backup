@@ -27,6 +27,10 @@ readonly NC='\033[0m' # No Color
 readonly MIN_ZSH_VERSION="5.8"
 readonly MIN_TMUX_VERSION="3.0"
 
+# Tool versions
+readonly NVM_VERSION="0.40.1"
+readonly JB_MONO_VERSION="2.304"
+
 ################################################################################
 # 2. UTILITY FUNCTIONS
 ################################################################################
@@ -1037,7 +1041,7 @@ setup_nvm() {
     fi
 
     log "Installing NVM..."
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+    curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh" | bash
 
     # Source NVM for current session
     export NVM_DIR="$HOME/.nvm"
