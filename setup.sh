@@ -90,6 +90,13 @@ detect_package_manager() {
     fi
 }
 
+# Check if version1 >= version2
+version_gte() {
+    local v1="$1"
+    local v2="$2"
+    printf '%s\n%s\n' "$v2" "$v1" | sort -V -C 2>/dev/null
+}
+
 backup_file() {
     local file="$1"
     if [[ -f "$file" ]]; then
@@ -1133,7 +1140,13 @@ verify_installation() {
     # Check zsh
     checks_total=$((checks_total + 1))
     if command_exists zsh; then
-        success "zsh installed ($(zsh --version | head -1))"
+        local zsh_version
+        zsh_version=$(zsh --version | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+        if version_gte "$zsh_version" "$MIN_ZSH_VERSION"; then
+            success "zsh installed ($(zsh --version | head -1))"
+        else
+            warning "zsh version $zsh_version < minimum $MIN_ZSH_VERSION"
+        fi
         checks_passed=$((checks_passed + 1))
     else
         warning "zsh not found"
@@ -1151,7 +1164,13 @@ verify_installation() {
     # Check tmux
     checks_total=$((checks_total + 1))
     if command_exists tmux; then
-        success "tmux installed ($(tmux -V))"
+        local tmux_version
+        tmux_version=$(tmux -V | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+        if version_gte "$tmux_version" "$MIN_TMUX_VERSION"; then
+            success "tmux installed ($(tmux -V))"
+        else
+            warning "tmux version $tmux_version < minimum $MIN_TMUX_VERSION"
+        fi
         checks_passed=$((checks_passed + 1))
     else
         warning "tmux not found"
