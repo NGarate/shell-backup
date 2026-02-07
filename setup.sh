@@ -550,7 +550,8 @@ zinit wait lucid light-mode for \
 # ============================================================================
 
 # Configure Git to use SSH instead of HTTPS (required for GitHub SSH keys)
-export GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
+# Only set if the SSH key exists (checked at shell startup)
+[[ -f ~/.ssh/id_ed25519 ]] && export GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
 
 # Custom git function - fuzzy checkout branch
 [[ -f ~/.zsh/gcof.zsh ]] && source ~/.zsh/gcof.zsh
