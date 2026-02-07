@@ -46,21 +46,26 @@ done
 # 2. UTILITY FUNCTIONS
 ################################################################################
 
+# Timestamp helper
+_ts() {
+    date '+%H:%M:%S'
+}
+
 log() {
-    echo -e "${BLUE}[INFO]${NC} $1" | tee -a "$SETUP_LOG"
+    echo -e "${BLUE}[$(_ts)][INFO]${NC} $1" | tee -a "$SETUP_LOG"
 }
 
 success() {
-    echo -e "${GREEN}✓${NC} $1" | tee -a "$SETUP_LOG"
+    echo -e "${GREEN}[$(_ts)]✓${NC} $1" | tee -a "$SETUP_LOG"
 }
 
 error() {
-    echo -e "${RED}✗${NC} $1" >&2 | tee -a "$SETUP_LOG"
+    echo -e "${RED}[$(_ts)]✗${NC} $1" >&2 | tee -a "$SETUP_LOG"
     exit 1
 }
 
 warning() {
-    echo -e "${YELLOW}⚠${NC} $1" | tee -a "$SETUP_LOG"
+    echo -e "${YELLOW}[$(_ts)]⚠${NC} $1" | tee -a "$SETUP_LOG"
 }
 
 command_exists() {
