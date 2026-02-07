@@ -145,6 +145,11 @@ backup_file() {
 }
 
 initialize_log() {
+    # Rotate previous log if it exists
+    if [[ -f "$SETUP_LOG" ]]; then
+        mv "$SETUP_LOG" "${SETUP_LOG}.prev"
+    fi
+
     cat > "$SETUP_LOG" << 'EOF'
 ================================================================================
 SHELL-BACKUP: Installation Log
