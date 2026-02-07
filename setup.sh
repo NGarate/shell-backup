@@ -1122,8 +1122,13 @@ setup_zinit_plugins() {
     zsh -c "
         source '$HOME/.local/share/zinit/zinit.git/zinit.zsh' 2>/dev/null
         source '$HOME/.zshrc' 2>/dev/null
-        # Wait for turbo-loaded plugins
-        sleep 3
+        # Wait for turbo-loaded plugins (poll for completion, timeout at 15s)
+        local elapsed=0
+        local timeout=15
+        while [[ ! -d "$HOME/.local/share/zinit/plugins/zsh-users---zsh-history-substring-search" ]] && [[ $elapsed -lt $timeout ]]; do
+            sleep 1
+            elapsed=$((elapsed + 1))
+        done
         # Force update to ensure all are installed (suppress compile hook warnings)
         zinit update --all --parallel -q 2>/dev/null || true
     " 2>/dev/null || true
