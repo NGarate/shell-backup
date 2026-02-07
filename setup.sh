@@ -31,16 +31,8 @@ readonly MIN_TMUX_VERSION="3.0"
 readonly NVM_VERSION="0.40.1"
 readonly JB_MONO_VERSION="2.304"
 
-# Parse command line arguments
+# Non-interactive flag (will be parsed after functions are defined)
 NON_INTERACTIVE=false
-for arg in "$@"; do
-    case "$arg" in
-        --ci|--non-interactive)
-            NON_INTERACTIVE=true
-            log "Running in non-interactive mode"
-            ;;
-    esac
-done
 
 ################################################################################
 # 2. UTILITY FUNCTIONS
@@ -60,13 +52,23 @@ success() {
 }
 
 error() {
-    echo -e "${RED}[$(_ts)]✗${NC} $1" >&2 | tee -a "$SETUP_LOG"
+    echo -e "${RED}[$(_ts)]✗${NC} $1" | tee -a "$SETUP_LOG" >&2
     exit 1
 }
 
 warning() {
     echo -e "${YELLOW}[$(_ts)]⚠${NC} $1" | tee -a "$SETUP_LOG"
 }
+
+# Parse command line arguments (after functions are defined)
+for arg in "$@"; do
+    case "$arg" in
+        --ci|--non-interactive)
+            NON_INTERACTIVE=true
+            log "Running in non-interactive mode"
+            ;;
+    esac
+done
 
 command_exists() {
     command -v "$1" &>/dev/null
