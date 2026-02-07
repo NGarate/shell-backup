@@ -1145,9 +1145,9 @@ setup_zinit_plugins() {
 
     # Run zsh to download and install all plugins
     log "Installing plugins (this may take a minute)..."
-    zsh -c "
-        source '$HOME/.local/share/zinit/zinit.git/zinit.zsh' 2>/dev/null
-        source '$HOME/.zshrc' 2>/dev/null
+    zsh -c '
+        source "$HOME/.local/share/zinit/zinit.git/zinit.zsh" 2>/dev/null
+        source "$HOME/.zshrc" 2>/dev/null
         # Wait for turbo-loaded plugins (poll for completion, timeout at 15s)
         local elapsed=0
         local timeout=15
@@ -1157,7 +1157,7 @@ setup_zinit_plugins() {
         done
         # Force update to ensure all are installed (suppress compile hook warnings)
         zinit update --all --parallel -q 2>/dev/null || true
-    " 2>/dev/null || true
+    ' 2>/dev/null || true
 
     success "Zinit plugins installed"
 }
