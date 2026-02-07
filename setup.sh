@@ -31,6 +31,17 @@ readonly MIN_TMUX_VERSION="3.0"
 readonly NVM_VERSION="0.40.1"
 readonly JB_MONO_VERSION="2.304"
 
+# Parse command line arguments
+NON_INTERACTIVE=false
+for arg in "$@"; do
+    case "$arg" in
+        --ci|--non-interactive)
+            NON_INTERACTIVE=true
+            log "Running in non-interactive mode"
+            ;;
+    esac
+done
+
 ################################################################################
 # 2. UTILITY FUNCTIONS
 ################################################################################
@@ -1052,8 +1063,8 @@ setup_shell() {
         # Check if zsh is already the default (handle different path formats)
         if [[ "$SHELL" == *"zsh"* ]]; then
             success "zsh is already the default shell"
-        elif [[ ! -t 0 ]]; then
-            # Stdin is not a tty (e.g., curl | bash), skip chsh to avoid hang
+        elif [[ ! -t 0 ]] || [[ "$NON_INTERACTIVE" == true ]]; then
+            # Non-interactive: skip chsh to avoid hang (tty check OR explicit flag)
             warning "Non-interactive mode detected. Skipping 'chsh' (would prompt for password)."
             warning "To change shell manually, run: chsh -s $zsh_path"
         else
