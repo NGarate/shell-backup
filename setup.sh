@@ -1312,7 +1312,12 @@ SUMMARY_EOF
 
 main() {
     initialize_log
-    
+
+    # Warn if running as root (configs will go to root's $HOME)
+    if [[ "$(id -u)" -eq 0 ]]; then
+        warning "Running as root. Configuration files will be installed to root's home directory ($HOME)."
+    fi
+
     log "=== SHELL-BACKUP: Setup Starting ==="
 
     detect_os
