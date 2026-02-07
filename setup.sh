@@ -194,7 +194,8 @@ install_core_tools() {
                 command_name="$tool_mapping"
             fi
 
-            if command_exists "$command_name"; then
+            # Also check with brew list as fallback for tools with different command names
+            if command_exists "$command_name" 2>/dev/null || brew list "$package_name" &>/dev/null; then
                 success "$package_name already installed"
             else
                 log "Installing $package_name..."
@@ -554,7 +555,9 @@ load_env_files() {
     fi
     
     # Load all .env.* files (including .env.local, .env.production, etc.)
-    for env_file in ~/.env.*; do
+    # Use NULL_GLOB to prevent "no matches found" error when no .env.* files exist
+    local env_files=(~/.env.*(N))
+    for env_file in "${env_files[@]}"; do
         [[ -f "$env_file" ]] || continue
         
         while IFS= read -r line || [[ -n "$line" ]]; do
@@ -984,6 +987,10 @@ deploy_custom_functions() {
     cat > "$HOME/.zsh/gcof.zsh" << 'GCOF_EOF'
 # gcof - Git Checkout Fuzzy
 # Fuzzy find and checkout git branches
+
+# Remove any existing alias to prevent conflicts
+unalias gcof 2>/dev/null || true
+
 gcof() {
     local branch
     branch=$(git branch --all | grep -v HEAD | sed 's/^..//' | fzf --preview 'git log -n 20 --oneline {}' | sed 's/.*\///') && git checkout "$branch"
