@@ -261,6 +261,13 @@ install_core_tools() {
         log "Installing tools via apt..."
         sudo apt-get install -y -qq zsh tmux git curl build-essential fontconfig
         sudo apt-get install -y -qq fzf zoxide ripgrep fd-find wl-clipboard xclip command-not-found 2>/dev/null || true
+
+        # Create fd symlink (fd-find package installs as fdfind)
+        if command_exists fdfind && ! command_exists fd; then
+            mkdir -p "$HOME/.local/bin"
+            ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
+            success "Created fd symlink (fdfind -> ~/.local/bin/fd)"
+        fi
     fi
 
     success "Core tools installed"
