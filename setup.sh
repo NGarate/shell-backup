@@ -623,9 +623,12 @@ if (( current_time - last_update > update_interval )); then
 fi
 ZSHRC_EOF
 
-    # Replace placeholders
-    sed -i '' "s|PNPM_HOME_PLACEHOLDER|$pnpm_home|g" "$HOME/.zshrc" 2>/dev/null || \
-    sed -i "s|PNPM_HOME_PLACEHOLDER|$pnpm_home|g" "$HOME/.zshrc"
+    # Replace placeholders (OS-specific sed syntax)
+    if [[ "$OS_TYPE" == "darwin" ]]; then
+        sed -i '' "s|PNPM_HOME_PLACEHOLDER|$pnpm_home|g" "$HOME/.zshrc"
+    else
+        sed -i "s|PNPM_HOME_PLACEHOLDER|$pnpm_home|g" "$HOME/.zshrc"
+    fi
 
     success ".zshrc deployed"
 }
