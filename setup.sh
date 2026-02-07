@@ -555,6 +555,8 @@ load_env_files() {
             # Skip comments and empty lines
             [[ "$line" =~ ^[[:space:]]*# ]] && continue
             [[ -z "$line" ]] && continue
+            # Validate line looks like VAR=value before exporting
+            [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*= ]] || continue
             # Export the variable
             export "$line" 2>/dev/null || true
         done < ~/.env
@@ -569,6 +571,8 @@ load_env_files() {
         while IFS= read -r line || [[ -n "$line" ]]; do
             [[ "$line" =~ ^[[:space:]]*# ]] && continue
             [[ -z "$line" ]] && continue
+            # Validate line looks like VAR=value before exporting
+            [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*= ]] || continue
             export "$line" 2>/dev/null || true
         done < "$env_file"
     done
