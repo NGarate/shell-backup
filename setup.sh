@@ -350,25 +350,27 @@ install_fonts() {
     fi
 
     log "Downloading JetBrains Mono..."
-    local temp_dir=$(mktemp -d)
-    local jb_version="2.304"
-    local download_url="https://github.com/JetBrains/JetBrainsMono/releases/download/v${jb_version}/JetBrainsMono-${jb_version}.zip"
 
-    if curl -fsSL "$download_url" -o "$temp_dir/jetbrains-mono.zip"; then
-        log "Extracting fonts..."
-        unzip -q "$temp_dir/jetbrains-mono.zip" -d "$temp_dir"
-        
-        # Copy only the required font variants (Regular, Bold, Italic, Bold Italic)
-        log "Installing font files..."
-        find "$temp_dir" -name "JetBrainsMono-*.ttf" -exec cp {} "$font_dir/" \;
-        
-        rm -rf "$temp_dir"
-        success "JetBrains Mono installed to $font_dir"
-    else
-        warning "Failed to download JetBrains Mono. You may need to install it manually."
-        rm -rf "$temp_dir"
-        return 1
-    fi
+    (
+        local temp_dir=$(mktemp -d)
+        trap "rm -rf '$temp_dir'" EXIT
+
+        local download_url="https://github.com/JetBrains/JetBrainsMono/releases/download/v${JB_MONO_VERSION}/JetBrainsMono-${JB_MONO_VERSION}.zip"
+
+        if curl -fsSL "$download_url" -o "$temp_dir/jetbrains-mono.zip"; then
+            log "Extracting fonts..."
+            unzip -q "$temp_dir/jetbrains-mono.zip" -d "$temp_dir"
+
+            # Copy only the required font variants (Regular, Bold, Italic, Bold Italic)
+            log "Installing font files..."
+            find "$temp_dir" -name "JetBrainsMono-*.ttf" -exec cp {} "$font_dir/" \;
+
+            success "JetBrains Mono installed to $font_dir"
+        else
+            warning "Failed to download JetBrains Mono. You may need to install it manually."
+            return 1
+        fi
+    )
 
     # Linux: refresh font cache
     if [[ "$OS_TYPE" == "linux" ]] && command_exists fc-cache; then
