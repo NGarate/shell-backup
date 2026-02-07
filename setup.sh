@@ -1024,6 +1024,10 @@ setup_shell() {
         # Check if zsh is already the default (handle different path formats)
         if [[ "$SHELL" == *"zsh"* ]]; then
             success "zsh is already the default shell"
+        elif [[ ! -t 0 ]]; then
+            # Stdin is not a tty (e.g., curl | bash), skip chsh to avoid hang
+            warning "Non-interactive mode detected. Skipping 'chsh' (would prompt for password)."
+            warning "To change shell manually, run: chsh -s $zsh_path"
         else
             log "Changing default shell to $zsh_path..."
             chsh -s "$zsh_path"
