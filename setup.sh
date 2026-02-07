@@ -97,6 +97,27 @@ version_gte() {
     printf '%s\n%s\n' "$v2" "$v1" | sort -V -C 2>/dev/null
 }
 
+# Retry a command up to 3 times with 5s delay
+retry() {
+    local max_attempts=3
+    local delay=5
+    local attempt=1
+
+    while [[ $attempt -le $max_attempts ]]; do
+        if "$@"; then
+            return 0
+        fi
+
+        if [[ $attempt -lt $max_attempts ]]; then
+            warning "Attempt $attempt failed. Retrying in ${delay}s..."
+            sleep $delay
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    error "Command failed after $max_attempts attempts: $*"
+}
+
 backup_file() {
     local file="$1"
     if [[ -f "$file" ]]; then
@@ -364,19 +385,16 @@ install_fonts() {
 
         local download_url="https://github.com/JetBrains/JetBrainsMono/releases/download/v${JB_MONO_VERSION}/JetBrainsMono-${JB_MONO_VERSION}.zip"
 
-        if curl -fsSL "$download_url" -o "$temp_dir/jetbrains-mono.zip"; then
-            log "Extracting fonts..."
-            unzip -q "$temp_dir/jetbrains-mono.zip" -d "$temp_dir"
+        retry curl -fsSL "$download_url" -o "$temp_dir/jetbrains-mono.zip"
 
-            # Copy only the required font variants (Regular, Bold, Italic, Bold Italic)
-            log "Installing font files..."
-            find "$temp_dir" -name "JetBrainsMono-*.ttf" -exec cp {} "$font_dir/" \;
+        log "Extracting fonts..."
+        unzip -q "$temp_dir/jetbrains-mono.zip" -d "$temp_dir"
 
-            success "JetBrains Mono installed to $font_dir"
-        else
-            warning "Failed to download JetBrains Mono. You may need to install it manually."
-            return 1
-        fi
+        # Copy only the required font variants (Regular, Bold, Italic, Bold Italic)
+        log "Installing font files..."
+        find "$temp_dir" -name "JetBrainsMono-*.ttf" -exec cp {} "$font_dir/" \;
+
+        success "JetBrains Mono installed to $font_dir"
     )
 
     # Linux: refresh font cache
@@ -1085,7 +1103,7 @@ setup_zinit_plugins() {
     if [[ ! -f $HOME/.local/share/zinit/zinit.git/zinit.zsh ]]; then
         log "Installing Zinit plugin manager..."
         command mkdir -p "$HOME/.local/share/zinit" && command chmod g-rwX "$HOME/.local/share/zinit"
-        command git clone https://github.com/zdharma-continuum/zinit "$HOME/.local/share/zinit/zinit.git"
+        retry git clone https://github.com/zdharma-continuum/zinit "$HOME/.local/share/zinit/zinit.git"
     fi
 
     # Run zsh to download and install all plugins
@@ -1118,7 +1136,7 @@ setup_tmux_plugins() {
 
     log "Installing tmux plugin manager (tpm)..."
     mkdir -p "$HOME/.tmux/plugins"
-    git clone https://github.com/tmux-plugins/tpm "$tpm_dir"
+    retry git clone https://github.com/tmux-plugins/tpm "$tpm_dir"
 
     # Install plugins
     log "Installing tmux plugins..."
