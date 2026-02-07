@@ -666,6 +666,7 @@ ZSHRC_EOF
         sed -i "s|PNPM_HOME_PLACEHOLDER|$pnpm_home|g" "$HOME/.zshrc"
     fi
 
+    chmod 600 "$HOME/.zshrc"
     success ".zshrc deployed"
 }
 
@@ -742,6 +743,7 @@ set -g status-right-length 30
 run '~/.tmux/plugins/tpm/tpm'
 TMUX_EOF
 
+    chmod 644 "$HOME/.tmux.conf"
     success ".tmux.conf deployed"
 }
 
@@ -785,6 +787,7 @@ window-padding-y = 0
 
 GHOSTTY_EOF
 
+    chmod 644 "$HOME/.config/ghostty/config"
     success "Ghostty configuration deployed"
 }
 
@@ -1018,9 +1021,11 @@ RedHatEnterprise = ""
 Redox = ""
 SUSE = ""
 Ubuntu = ""
-Unknown = ""
+Unknown = ""
 Windows = ""
 STARSHIP_EOF
+
+    chmod 644 "$HOME/.config/starship.toml"
     success "Starship config deployed"
 }
 
@@ -1045,6 +1050,7 @@ gcof() {
     branch=$(git branch --all | grep -v HEAD | sed 's/^..//' | fzf --preview 'git log -n 20 --oneline {}' | sed 's/.*\///') && git checkout "$branch"
 }
 GCOF_EOF
+    chmod 644 "$HOME/.zsh/gcof.zsh"
     success "gcof.zsh function deployed"
 }
 
