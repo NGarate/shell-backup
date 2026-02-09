@@ -74,10 +74,11 @@ command_exists() {
     command -v "$1" &>/dev/null
 }
 
-detect_os() {
+detect_platform() {
     case "$(uname -s)" in
-        Darwin*) 
+        Darwin*)
             OS_TYPE="darwin"
+            PKG_MANAGER="brew"
             if [[ $(uname -m) == "arm64" ]]; then
                 ARCH="aarch64"
             else
@@ -87,25 +88,16 @@ detect_os() {
         Linux*)
             OS_TYPE="linux"
             ARCH=$(uname -m)
+            if command_exists apt-get; then
+                PKG_MANAGER="apt"
+            else
+                error "No supported package manager found. This script requires apt (Ubuntu/Debian)."
+            fi
             ;;
         *)
             error "Unsupported operating system: $(uname -s)"
             ;;
     esac
-}
-
-detect_package_manager() {
-    if [[ "$OS_TYPE" == "darwin" ]]; then
-        PKG_MANAGER="brew"
-        return 0
-    fi
-
-    # Linux: Ubuntu/Debian only
-    if command_exists apt-get; then
-        PKG_MANAGER="apt"
-    else
-        error "No supported package manager found. This script requires apt (Ubuntu/Debian)."
-    fi
 }
 
 # Check if version1 >= version2
@@ -185,13 +177,14 @@ check_prerequisites() {
 setup_package_manager() {
     log "Setting up package manager..."
 
-    detect_package_manager
-    log "Detected package manager: $PKG_MANAGER"
-
     if [[ "$PKG_MANAGER" == "brew" ]]; then
-        if [[ "$OS_TYPE" == "darwin" ]] && ! command_exists brew; then
+        if ! command_exists brew; then
             log "Installing Homebrew..."
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            if [[ "$NON_INTERACTIVE" == true ]]; then
+                NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            else
+                /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            fi
             success "Homebrew installed"
         else
             success "Homebrew already available"
@@ -212,35 +205,15 @@ setup_package_manager() {
 # 5. CORE TOOL INSTALLATION
 ################################################################################
 
-install_via_package_manager() {
-    local package="$1"
-    local manager="$2"
-
-    case "$manager" in
-        brew)
-            if ! command_exists "$package" 2>/dev/null; then
-                brew install "$package"
-            fi
-            ;;
-        apt)
-            if ! command_exists "$package" 2>/dev/null; then
-                sudo apt-get install -y -qq "$package"
-            fi
-            ;;
-    esac
-}
-
 install_core_tools() {
     log "Installing core tools..."
 
     if [[ "$OS_TYPE" == "darwin" ]]; then
         # macOS via Homebrew
         # Format: "package_name:command_name" - if no colon, command_name = package_name
-        local tools=("zsh" "tmux" "starship" "fzf" "zoxide" "ripgrep:rg" "fd:fd")
+        local tools=("zsh" "tmux" "fzf" "zoxide" "ripgrep:rg" "fd:fd")
+        local package_name command_name
         for tool_mapping in "${tools[@]}"; do
-            local package_name
-            local command_name
-
             if [[ "$tool_mapping" == *":"* ]]; then
                 package_name="${tool_mapping%%:*}"
                 command_name="${tool_mapping##*:}"
@@ -249,8 +222,7 @@ install_core_tools() {
                 command_name="$tool_mapping"
             fi
 
-            # Also check with brew list as fallback for tools with different command names
-            if command_exists "$command_name" 2>/dev/null || brew list "$package_name" &>/dev/null; then
+            if command_exists "$command_name" || brew list "$package_name" &>/dev/null; then
                 success "$package_name already installed"
             else
                 log "Installing $package_name..."
@@ -261,7 +233,7 @@ install_core_tools() {
     else
         # Ubuntu/Debian via apt
         log "Installing tools via apt..."
-        sudo apt-get install -y -qq zsh tmux git curl build-essential fontconfig
+        sudo apt-get install -y -qq zsh tmux git curl unzip build-essential fontconfig
         sudo apt-get install -y -qq fzf zoxide ripgrep fd-find wl-clipboard xclip command-not-found 2>/dev/null || true
 
         # Create fd symlink (fd-find package installs as fdfind)
@@ -319,43 +291,6 @@ install_ghostty() {
     success "Ghostty installed"
 }
 
-install_linux_clipboard() {
-    # Only needed on Ubuntu for tmux-yank integration
-    if [[ "$OS_TYPE" != "linux" ]]; then
-        return 0
-    fi
-
-    log "Checking clipboard support for tmux..."
-
-    local clipboard_installed=false
-
-    # Check/install wl-clipboard (Wayland)
-    if ! command_exists wl-copy; then
-        log "Installing wl-clipboard (Wayland support)..."
-        sudo apt-get install -y -qq wl-clipboard
-        success "wl-clipboard installed"
-        clipboard_installed=true
-    else
-        success "wl-clipboard already installed"
-        clipboard_installed=true
-    fi
-
-    # Check/install xclip (X11 fallback)
-    if ! command_exists xclip; then
-        log "Installing xclip (X11 fallback support)..."
-        sudo apt-get install -y -qq xclip
-        success "xclip installed"
-        clipboard_installed=true
-    else
-        success "xclip already installed"
-        clipboard_installed=true
-    fi
-
-    if [[ "$clipboard_installed" == true ]]; then
-        success "Clipboard support ready for tmux-yank"
-    fi
-}
-
 # Detect the appropriate clipboard command for the current environment
 detect_clipboard_command() {
     if [[ "$OS_TYPE" == "darwin" ]]; then
@@ -396,13 +331,8 @@ install_fonts() {
     fi
     mkdir -p "$font_dir"
 
-    # Check if JetBrains Mono is already installed (handle empty glob in zsh)
-    local font_exists=false
-    if [[ -n $(find "$font_dir" -maxdepth 1 -name "JetBrainsMono*.ttf" -o -name "JetBrainsMono*.otf" 2>/dev/null) ]]; then
-        font_exists=true
-    fi
-    
-    if [[ "$font_exists" == true ]]; then
+    # Check if JetBrains Mono is already installed
+    if find "$font_dir" -maxdepth 1 -name "JetBrainsMono*.ttf" -o -name "JetBrainsMono*.otf" 2>/dev/null | grep -q .; then
         success "JetBrains Mono already installed"
         return 0
     fi
@@ -493,8 +423,6 @@ export NVM_DIR="$HOME/.nvm"
 # ============================================================================
 # Core Plugins (loaded immediately for essential functionality)
 # ============================================================================
-
-
 
 # Autosuggestions - show command completions based on history
 zinit light zsh-users/zsh-autosuggestions
@@ -619,7 +547,6 @@ load_env_files() {
     fi
     
     # Load all .env.* files (including .env.local, .env.production, etc.)
-    # Use NULL_GLOB to prevent "no matches found" error when no .env.* files exist
     local env_files=(~/.env.*(N))
     for env_file in "${env_files[@]}"; do
         [[ -f "$env_file" ]] || continue
@@ -1197,102 +1124,73 @@ verify_installation() {
     local checks_passed=0
     local checks_total=0
 
-    # Check zsh
-    checks_total=$((checks_total + 1))
-    if command_exists zsh; then
-        local zsh_version
-        zsh_version=$(zsh --version | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-        if version_gte "$zsh_version" "$MIN_ZSH_VERSION"; then
-            success "zsh installed ($(zsh --version | head -1))"
+    check_cmd() {
+        checks_total=$((checks_total + 1))
+        if command_exists "$1"; then
+            success "$1 installed"
+            checks_passed=$((checks_passed + 1))
         else
-            warning "zsh version $zsh_version < minimum $MIN_ZSH_VERSION"
+            warning "$1 not found"
+        fi
+    }
+
+    check_versioned_cmd() {
+        local name="$1" min_ver="$2" ver="$3"
+        checks_total=$((checks_total + 1))
+        if ! command_exists "$name"; then
+            warning "$name not found"
+            return
+        fi
+        if version_gte "$ver" "$min_ver"; then
+            success "$name installed ($ver)"
+        else
+            warning "$name version $ver < minimum $min_ver"
         fi
         checks_passed=$((checks_passed + 1))
-    else
-        warning "zsh not found"
-    fi
+    }
 
-    # Check Zinit
-    checks_total=$((checks_total + 1))
-    if [[ -d "$HOME/.local/share/zinit/zinit.git" ]]; then
-        success "Zinit installed"
-        checks_passed=$((checks_passed + 1))
-    else
-        warning "Zinit not found"
-    fi
-
-    # Check tmux
-    checks_total=$((checks_total + 1))
-    if command_exists tmux; then
-        local tmux_version
-        tmux_version=$(tmux -V | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-        if version_gte "$tmux_version" "$MIN_TMUX_VERSION"; then
-            success "tmux installed ($(tmux -V))"
+    check_path() {
+        checks_total=$((checks_total + 1))
+        if [[ -e "$2" ]]; then
+            success "$1 installed"
+            checks_passed=$((checks_passed + 1))
         else
-            warning "tmux version $tmux_version < minimum $MIN_TMUX_VERSION"
+            warning "$1 not found"
         fi
-        checks_passed=$((checks_passed + 1))
-    else
-        warning "tmux not found"
-    fi
+    }
 
-    # Check starship
-    checks_total=$((checks_total + 1))
-    if command_exists starship; then
-        success "Starship installed ($(starship --version | head -1))"
-        checks_passed=$((checks_passed + 1))
-    else
-        warning "Starship not found"
-    fi
+    check_versioned_cmd "zsh" "$MIN_ZSH_VERSION" \
+        "$(zsh --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
+    check_versioned_cmd "tmux" "$MIN_TMUX_VERSION" \
+        "$(tmux -V 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
 
-    # Check fzf
-    checks_total=$((checks_total + 1))
-    if command_exists fzf; then
-        success "fzf installed"
-        checks_passed=$((checks_passed + 1))
-    else
-        warning "fzf not found"
-    fi
+    check_cmd "starship"
+    check_cmd "fzf"
+    check_cmd "ghostty"
 
-    # Check fonts
-    checks_total=$((checks_total + 1))
-    local font_dir_check
+    check_path "Zinit" "$HOME/.local/share/zinit/zinit.git"
+    check_path ".zshrc" "$HOME/.zshrc"
+
+    # Font check
+    local font_dir
     if [[ "$OS_TYPE" == "darwin" ]]; then
-        font_dir_check="$HOME/Library/Fonts"
+        font_dir="$HOME/Library/Fonts"
     else
-        font_dir_check="$HOME/.local/share/fonts"
+        font_dir="$HOME/.local/share/fonts"
     fi
-    
-    if [[ -n $(find "$font_dir_check" -maxdepth 1 \( -name "JetBrainsMono*.ttf" -o -name "JetBrainsMono*.otf" \) 2>/dev/null) ]]; then
+    checks_total=$((checks_total + 1))
+    if find "$font_dir" -maxdepth 1 -name "JetBrainsMono*.ttf" -o -name "JetBrainsMono*.otf" 2>/dev/null | grep -q .; then
         success "JetBrains Mono installed"
         checks_passed=$((checks_passed + 1))
     else
         warning "JetBrains Mono not found"
     fi
 
-    # Check Ghostty
-    checks_total=$((checks_total + 1))
-    if command_exists ghostty; then
-        success "Ghostty installed"
-        checks_passed=$((checks_passed + 1))
-    else
-        warning "Ghostty not found"
-    fi
-
-    # Check config files
-    checks_total=$((checks_total + 1))
-    if [[ -f "$HOME/.zshrc" ]]; then
-        success ".zshrc deployed"
-        checks_passed=$((checks_passed + 1))
-    else
-        warning ".zshrc not found"
-    fi
-
     log "Verification: $checks_passed/$checks_total checks passed"
 }
 
 ################################################################################
-# 16. POST-INSTALLATION SUMMARY
+# 15. POST-INSTALLATION SUMMARY
 ################################################################################
 
 print_summary() {
@@ -1338,7 +1236,7 @@ SUMMARY_EOF
 }
 
 ################################################################################
-# 17. MAIN EXECUTION
+# 16. MAIN EXECUTION
 ################################################################################
 
 main() {
@@ -1351,16 +1249,14 @@ main() {
 
     log "=== SHELL-BACKUP: Setup Starting ==="
 
-    detect_os
-    log "OS: $OS_TYPE | Arch: $ARCH"
-    log "Detected system: $OS_TYPE ($ARCH)"
+    detect_platform
+    log "Detected system: $OS_TYPE ($ARCH) | Package manager: $PKG_MANAGER"
 
     check_prerequisites
     setup_package_manager
     install_core_tools
     install_starship
     install_ghostty || true
-    install_linux_clipboard || true
     install_fonts || true
 
     deploy_zshrc
@@ -1378,12 +1274,8 @@ main() {
     print_summary
 
     log "=== SHELL-BACKUP: Setup Complete ==="
-    success "All done! Check ~/.setup.log for details."
-
-    # Reload zsh to apply all changes
-    log "Reloading shell..."
-    exec zsh
+    success "All done! Run 'exec zsh' to reload your shell."
 }
 
 # Run main function
-main "$@"
+main
