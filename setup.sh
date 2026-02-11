@@ -493,6 +493,9 @@ zinit wait lucid light-mode for \
 # Custom git function - fuzzy checkout branch
 [[ -f ~/.zsh/gcof.zsh ]] && source ~/.zsh/gcof.zsh
 
+# Load aliases file
+[[ -f ~/.zsh_aliases ]] && source ~/.zsh_aliases
+
 # ============================================================================
 # Prompt and Command Navigation
 # ============================================================================
