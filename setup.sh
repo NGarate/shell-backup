@@ -493,9 +493,6 @@ zinit wait lucid light-mode for \
 # Custom git function - fuzzy checkout branch
 [[ -f ~/.zsh/gcof.zsh ]] && source ~/.zsh/gcof.zsh
 
-# Custom function - patata
-[[ -f ~/.zsh/patata.zsh ]] && source ~/.zsh/patata.zsh
-
 # Load aliases file
 [[ -f ~/.zsh_aliases ]] && source ~/.zsh_aliases
 
@@ -1044,16 +1041,6 @@ gcof() {
 GCOF_EOF
     chmod 644 "$HOME/.zsh/gcof.zsh"
     success "gcof.zsh function deployed"
-
-    cat > "$HOME/.zsh/patata.zsh" << 'PATATA_EOF'
-# patata - echoes patata
-
-patata() {
-    echo "patata"
-}
-PATATA_EOF
-    chmod 644 "$HOME/.zsh/patata.zsh"
-    success "patata.zsh function deployed"
 }
 
 ################################################################################
