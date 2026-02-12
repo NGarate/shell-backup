@@ -1284,7 +1284,7 @@ reload_all_shells() {
             touch "$marker_file"
             busy_count=$((busy_count + 1))
         fi
-    done < <(tmux list-panes -t "$current_session" -F '#{pane_id} #{pane_current_command} #{pane_pid}' 2>/dev/null)
+    done < <(tmux list-panes -s -t "$current_session" -F '#{pane_id} #{pane_current_command} #{pane_pid}' 2>/dev/null)
 
     if [[ $idle_count -gt 0 ]]; then
         success "Reloaded $idle_count idle shell(s) immediately"
