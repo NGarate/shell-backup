@@ -1270,18 +1270,34 @@ reload_all_shells() {
         success "Reloaded $idle_count idle shell(s) immediately"
     fi
 
-    # Spawn a background watcher for each busy pane that polls until idle, then reloads
+    # Spawn a background watcher for each busy pane that polls until idle, then reloads.
+    # Uses a lock file per pane so that repeated setup.sh runs don't queue multiple reloads.
     if [[ ${#busy_panes[@]} -gt 0 ]]; then
+        local lock_dir="/tmp/shell-reload-locks"
+        mkdir -p "$lock_dir"
         log "Watching ${#busy_panes[@]} busy shell(s) for reload when idle..."
         (
             for pane_id in "${busy_panes[@]}"; do
+                local lock_file="$lock_dir/${pane_id//\%/}"
+                # Kill any previous watcher for this pane
+                if [[ -f "$lock_file" ]]; then
+                    local old_pid
+                    old_pid=$(cat "$lock_file" 2>/dev/null)
+                    kill "$old_pid" 2>/dev/null || true
+                fi
                 (
+                    echo $$ > "$lock_file"
                     while true; do
                         sleep 1
+                        # If another watcher replaced us, exit
+                        local current_owner
+                        current_owner=$(cat "$lock_file" 2>/dev/null) || break
+                        [[ "$current_owner" == "$$" ]] || break
                         local cmd
                         cmd=$(tmux display-message -t "$pane_id" -p '#{pane_current_command}' 2>/dev/null) || break
                         if [[ "$cmd" == "zsh" || "$cmd" == "-zsh" ]]; then
                             tmux send-keys -t "$pane_id" "exec zsh" Enter 2>/dev/null
+                            rm -f "$lock_file"
                             break
                         fi
                     done
