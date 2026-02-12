@@ -1027,7 +1027,7 @@ gcof() {
         branch="$filtered"
         echo "gcof: checking out '$branch'" >&2
     else
-        branch=$(echo "$filtered" | fzf --preview 'git log -n 20 --color --oneline {}')
+        branch=$(echo "$branches" | fzf --query "${1:-}" --preview 'git log -n 20 --color --oneline {}')
         if [[ -z "$branch" ]]; then
             return 0
         fi
