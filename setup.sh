@@ -996,8 +996,44 @@ deploy_custom_functions() {
 unalias gcof 2>/dev/null || true
 
 gcof() {
+    local branches
+    branches=$(
+        git branch --all \
+        | grep -v 'HEAD' \
+        | sed 's/^[* ]*//' \
+        | sed 's|^remotes/[^/]*/||' \
+        | sort -u
+    )
+
+    local filtered
+    if [[ -n "${1:-}" ]]; then
+        filtered=$(echo "$branches" | grep -i -- "$1" || true)
+    else
+        filtered="$branches"
+    fi
+
+    local count
+    if [[ -z "$filtered" ]]; then
+        count=0
+    else
+        count=$(echo "$filtered" | wc -l | tr -d ' ')
+    fi
+
     local branch
-    branch=$(git branch --all | grep -v HEAD | sed 's/^..//' | fzf --preview 'git log -n 20 --oneline {}' | sed 's/.*\///') && git checkout "$branch"
+    if (( count == 0 )); then
+        echo "gcof: no branches matching '$1'" >&2
+        return 1
+    elif (( count == 1 )); then
+        branch="$filtered"
+        echo "gcof: checking out '$branch'" >&2
+    else
+        branch=$(echo "$filtered" | fzf --preview 'git log -n 20 --color --oneline {}')
+        if [[ -z "$branch" ]]; then
+            return 0
+        fi
+    fi
+
+    git checkout "$branch"
 }
 GCOF_EOF
     chmod 644 "$HOME/.zsh/gcof.zsh"
