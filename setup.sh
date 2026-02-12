@@ -493,6 +493,9 @@ zinit wait lucid light-mode for \
 # Custom git function - fuzzy checkout branch
 [[ -f ~/.zsh/gcof.zsh ]] && source ~/.zsh/gcof.zsh
 
+# Custom function - patata
+[[ -f ~/.zsh/patata.zsh ]] && source ~/.zsh/patata.zsh
+
 # Load aliases file
 [[ -f ~/.zsh_aliases ]] && source ~/.zsh_aliases
 
@@ -608,24 +611,7 @@ if (( current_time - last_update > update_interval )); then
     ) &!
 fi
 
-# ============================================================================
-# Scheduled Shell Reload (for reload_all_shells functionality)
-# ============================================================================
 
-# Check if a reload was requested by setup.sh
-check_scheduled_reload() {
-    local pane_id="${TMUX_PANE:-}"
-    [[ -z "$pane_id" ]] && return 0
-    local reload_marker="/tmp/zsh_reload_${pane_id//\%/}"
-    if [[ -f "$reload_marker" ]]; then
-        rm -f "$reload_marker"
-        exec zsh
-    fi
-}
-
-# Add to precmd hooks to check before each prompt
-autoload -Uz add-zsh-hook
-add-zsh-hook precmd check_scheduled_reload
 
 ZSHRC_EOF
 
@@ -1058,6 +1044,16 @@ gcof() {
 GCOF_EOF
     chmod 644 "$HOME/.zsh/gcof.zsh"
     success "gcof.zsh function deployed"
+
+    cat > "$HOME/.zsh/patata.zsh" << 'PATATA_EOF'
+# patata - echoes patata
+
+patata() {
+    echo "patata"
+}
+PATATA_EOF
+    chmod 644 "$HOME/.zsh/patata.zsh"
+    success "patata.zsh function deployed"
 }
 
 ################################################################################
@@ -1266,7 +1262,7 @@ reload_all_shells() {
     current_pane=$(tmux display-message -p '#{pane_id}' 2>/dev/null) || current_pane=""
 
     local idle_count=0
-    local busy_count=0
+    local busy_panes=()
 
     # Get all panes in the current session
     while read pane_id current_cmd _pane_pid; do
@@ -1279,22 +1275,35 @@ reload_all_shells() {
         if [[ "$current_cmd" == "zsh" || "$current_cmd" == "-zsh" ]]; then
             tmux send-keys -t "$pane_id" "exec zsh" Enter 2>/dev/null && idle_count=$((idle_count + 1))
         else
-            # Busy — drop a marker keyed on pane_id so the precmd hook picks it up
-            local marker_file="/tmp/zsh_reload_${pane_id//\%/}"
-            touch "$marker_file"
-            busy_count=$((busy_count + 1))
+            busy_panes+=("$pane_id")
         fi
     done < <(tmux list-panes -s -t "$current_session" -F '#{pane_id} #{pane_current_command} #{pane_pid}' 2>/dev/null)
 
     if [[ $idle_count -gt 0 ]]; then
         success "Reloaded $idle_count idle shell(s) immediately"
     fi
-    if [[ $busy_count -gt 0 ]]; then
-        log "Scheduled reload for $busy_count busy shell(s)"
-    fi
 
-    # Clean up stale marker files older than 7 days
-    find /tmp -maxdepth 1 -name 'zsh_reload_*' -mtime +7 -delete 2>/dev/null || true
+    # Spawn a background watcher for each busy pane that polls until idle, then reloads
+    if [[ ${#busy_panes[@]} -gt 0 ]]; then
+        log "Watching ${#busy_panes[@]} busy shell(s) for reload when idle..."
+        (
+            for pane_id in "${busy_panes[@]}"; do
+                (
+                    while true; do
+                        sleep 1
+                        local cmd
+                        cmd=$(tmux display-message -t "$pane_id" -p '#{pane_current_command}' 2>/dev/null) || break
+                        if [[ "$cmd" == "zsh" || "$cmd" == "-zsh" ]]; then
+                            tmux send-keys -t "$pane_id" "exec zsh" Enter 2>/dev/null
+                            break
+                        fi
+                    done
+                ) &
+            done
+            wait
+        ) &
+        disown
+    fi
 }
 
 print_summary() {
