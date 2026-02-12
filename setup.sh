@@ -1313,7 +1313,9 @@ main() {
     print_summary
 
     log "=== SHELL-BACKUP: Setup Complete ==="
-    success "All done! Run 'exec zsh' to reload your shell."
+    success "All done! Reloading shell..."
+
+    exec zsh
 }
 
 # Run main function
