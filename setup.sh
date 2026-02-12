@@ -614,8 +614,8 @@ fi
 
 # Check if a reload was requested by setup.sh
 check_scheduled_reload() {
-    local pane_id
-    pane_id=$(tmux display-message -p '#{pane_id}' 2>/dev/null) || return 0
+    local pane_id="${TMUX_PANE:-}"
+    [[ -z "$pane_id" ]] && return 0
     local reload_marker="/tmp/zsh_reload_${pane_id//\%/}"
     if [[ -f "$reload_marker" ]]; then
         rm -f "$reload_marker"
