@@ -607,6 +607,26 @@ if (( current_time - last_update > update_interval )); then
         touch "$zinit_update_stamp"
     ) &!
 fi
+
+# ============================================================================
+# Scheduled Shell Reload (for reload_all_shells functionality)
+# ============================================================================
+
+# Check if a reload was requested by setup.sh
+check_scheduled_reload() {
+    local pane_id
+    pane_id=$(tmux display-message -p '#{pane_id}' 2>/dev/null) || return 0
+    local reload_marker="/tmp/zsh_reload_${pane_id//\%/}"
+    if [[ -f "$reload_marker" ]]; then
+        rm -f "$reload_marker"
+        exec zsh
+    fi
+}
+
+# Add to precmd hooks to check before each prompt
+autoload -Uz add-zsh-hook
+add-zsh-hook precmd check_scheduled_reload
+
 ZSHRC_EOF
 
     # Replace placeholders (OS-specific sed syntax)
@@ -1232,6 +1252,51 @@ verify_installation() {
 # 15. POST-INSTALLATION SUMMARY
 ################################################################################
 
+reload_all_shells() {
+    # Detect the current tmux session dynamically
+    local current_session
+    current_session=$(tmux display-message -p '#{session_name}' 2>/dev/null) || {
+        warning "Not running inside tmux - skipping shell reload"
+        return 0
+    }
+
+    log "Reloading all shells in tmux session '$current_session'..."
+
+    local current_pane
+    current_pane=$(tmux display-message -p '#{pane_id}' 2>/dev/null) || current_pane=""
+
+    local idle_count=0
+    local busy_count=0
+
+    # Get all panes in the current session
+    while read pane_id current_cmd _pane_pid; do
+        # Skip the pane running this script
+        if [[ -n "$current_pane" && "$pane_id" == "$current_pane" ]]; then
+            continue
+        fi
+
+        # A pane is "idle" if the foreground process is zsh itself
+        if [[ "$current_cmd" == "zsh" || "$current_cmd" == "-zsh" ]]; then
+            tmux send-keys -t "$pane_id" "exec zsh" Enter 2>/dev/null && idle_count=$((idle_count + 1))
+        else
+            # Busy — drop a marker keyed on pane_id so the precmd hook picks it up
+            local marker_file="/tmp/zsh_reload_${pane_id//\%/}"
+            touch "$marker_file"
+            busy_count=$((busy_count + 1))
+        fi
+    done < <(tmux list-panes -t "$current_session" -F '#{pane_id} #{pane_current_command} #{pane_pid}' 2>/dev/null)
+
+    if [[ $idle_count -gt 0 ]]; then
+        success "Reloaded $idle_count idle shell(s) immediately"
+    fi
+    if [[ $busy_count -gt 0 ]]; then
+        log "Scheduled reload for $busy_count busy shell(s)"
+    fi
+
+    # Clean up stale marker files older than 7 days
+    find /tmp -maxdepth 1 -name 'zsh_reload_*' -mtime +7 -delete 2>/dev/null || true
+}
+
 print_summary() {
     cat << 'SUMMARY_EOF'
 
@@ -1310,12 +1375,14 @@ main() {
     setup_tmux_plugins
 
     verify_installation
+
+    # Reload all shells in the tmux session (idle ones immediately, busy ones scheduled)
+    reload_all_shells || true
+
     print_summary
 
     log "=== SHELL-BACKUP: Setup Complete ==="
-    success "All done! Reloading shell..."
-
-    exec zsh
+    success "All done!"
 }
 
 # Run main function
