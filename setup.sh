@@ -1001,6 +1001,7 @@ unalias gcof 2>/dev/null || true
 gcof() {
     local branches
     branches=$(
+        git pull --quiet &&
         git branch --all \
         | grep -v 'HEAD' \
         | sed 's/^[* ]*//' \
