@@ -567,13 +567,19 @@ load_env_files() {
 load_env_files
 
 # ============================================================================
-# Tmux Auto-attach (Ghostty integration)
+# Tmux Auto-attach (Ghostty integration and SSH sessions)
 # ============================================================================
 
 # Auto-start tmux when opening Ghostty
 # Ghostty sets TERM to xterm-ghostty
 if [[ -z "$TMUX" && "$TERM" == xterm-ghostty* ]]; then
     tmux new-session -A -s main
+fi
+
+# Auto-start tmux when connecting via SSH (from Termux/mobile)
+# Uses a separate session named "termux" to avoid conflicts with local sessions
+if [[ -z "$TMUX" && -n "$SSH_CONNECTION" ]]; then
+    tmux new-session -A -s termux
 fi
 
 # ============================================================================
