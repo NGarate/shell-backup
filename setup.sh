@@ -452,9 +452,8 @@ fi
 # Optional/Secondary Plugins (turbo mode for faster startup)
 # ============================================================================
 
-# Load after 0 seconds (essentially async after prompt is shown)
-zinit wait lucid light-mode for \
-    zsh-users/zsh-history-substring-search
+# Load immediately (not async) so that keybindings work correctly
+zinit light zsh-users/zsh-history-substring-search
 
 # History settings (Share across sessions)
 export HISTFILE="$HOME/.zsh_history"
