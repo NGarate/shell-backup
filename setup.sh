@@ -472,14 +472,15 @@ bindkey '^[[B' history-substring-search-down
 # Tmux integration - session management helpers (lazy loaded)
 zinit wait lucid for \
     OMZP::tmux \
-    OMZP::bun \
     OMZP::git \
+    OMZP::bun \
     OMZP::alias-finder
 
 # You Should Use - reminds you of existing aliases
 # pnpm support - aliases and completions (lazy loaded)
 zinit wait lucid light-mode for \
     ntnyq/omz-plugin-pnpm \
+    ntnyq/omz-plugin-bun \
     MichaelAquilina/zsh-you-should-use
 
 # ============================================================================
