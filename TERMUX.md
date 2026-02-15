@@ -31,8 +31,8 @@ pkg update
 # Install SSH client
 pkg install openssh
 
-# Install a Nerd Font for icon support
-pkg install fontconfig
+# Install tools needed for font installation
+pkg install curl unzip
 ```
 
 ---
@@ -41,44 +41,39 @@ pkg install fontconfig
 
 The Starship prompt and other tools use Nerd Font icons. Without these, you'll see "tofu" boxes (□) instead of icons.
 
-### Option A: Install Termux:Styling (Easiest)
-
-1. Install "Termux:Styling" from F-Droid
-2. Open Termux
-3. Long-press terminal → "More" → "Style"
-4. Choose "JetBrains Mono" or any font with Nerd Font icons
-
-### Option B: Manual Font Installation
+Install JetBrains Mono Nerd Font manually:
 
 ```bash
-# Create fonts directory
+# Create termux config directory if it doesn't exist
 mkdir -p ~/.termux
 
-# Download JetBrains Mono Nerd Font
-cd ~/.termux
-curl -L -o font.ttf \
-  "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.2.1/JetBrainsMono.zip"
+# Install required packages
+pkg install unzip curl
 
-# Extract and move the font file
-unzip font.ttf
+# Change to the termux config directory
+cd ~/.termux
+
+# Download JetBrains Mono Nerd Font (v3.4.0)
+curl -L -o JetBrainsMono.zip \
+  "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/JetBrainsMono.zip"
+
+# Extract the ZIP file
+unzip -o JetBrainsMono.zip
+
+# Move the Regular variant to font.ttf (required filename)
 mv JetBrainsMonoNerdFont-Regular.ttf font.ttf
 
-# Clean up
-rm -f font.ttf JetBrainsMono*.ttf
+# Clean up downloaded and extracted files
+rm -f JetBrainsMono.zip JetBrainsMono*.ttf OFL.txt README.md
 
-# Apply font
+# Apply font changes immediately (no restart required)
 termux-reload-settings
 ```
 
-### Option C: Use curl to download directly
+### One-liner (Copy & Paste)
 
 ```bash
-# Download a specific Nerd Font variant directly
-cd ~/.termux
-curl -L -o font.ttf \
-  "https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/JetBrainsMono/Ligatures/Regular/JetBrainsMonoNerdFont-Regular.ttf"
-
-termux-reload-settings
+mkdir -p ~/.termux && cd ~/.termux && curl -L -o JetBrainsMono.zip "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/JetBrainsMono.zip" && unzip -o JetBrainsMono.zip && mv JetBrainsMonoNerdFont-Regular.ttf font.ttf && rm -f JetBrainsMono.zip JetBrainsMono*.ttf OFL.txt README.md && termux-reload-settings
 ```
 
 ---
@@ -223,9 +218,7 @@ ssh username@your-laptop-ip
 
 **Problem:** Font doesn't support Nerd Font glyphs
 
-**Solution:** 
-- Install Termux:Styling and select a Nerd Font
-- Or manually install JetBrainsMono Nerd Font (see Step 3)
+**Solution:** Re-run the font installation commands from Step 3.
 
 ### Colors Don't Work
 
@@ -261,9 +254,7 @@ fi
 
 ### Font Looks Too Small/Large
 
-**Solution:**
-- Pinch to zoom in/out in Termux
-- Or use Termux:Styling to change font size
+**Solution:** Pinch to zoom in/out in Termux to adjust font size.
 
 ### Copy/Paste Between Phone and Laptop
 
@@ -291,9 +282,14 @@ ssh laptop
 # Reload Termux settings after changes
 termux-reload-settings
 
-# Install/update Nerd Font
-curl -L -o ~/.termux/font.ttf \
-  "https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/JetBrainsMono/Ligatures/Regular/JetBrainsMonoNerdFont-Regular.ttf"
+# Quick install Nerd Font (creates ~/.termux, downloads, extracts, applies)
+mkdir -p ~/.termux && cd ~/.termux && \
+pkg install -y unzip curl 2>/dev/null; \
+curl -L -o JetBrainsMono.zip \
+  "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/JetBrainsMono.zip" && \
+unzip -o JetBrainsMono.zip && \
+mv JetBrainsMonoNerdFont-Regular.ttf font.ttf && \
+rm -f JetBrainsMono.zip JetBrainsMono*.ttf OFL.txt README.md && \
 termux-reload-settings
 ```
 
