@@ -3,7 +3,7 @@
 ################################################################################
 # SHELL-BACKUP: Development Environment Setup
 # Supports: macOS (Intel/Apple Silicon), Ubuntu/Debian (apt + snapd)
-# Version: 2.0.0
+# Version: 2.1.0
 ################################################################################
 
 set -euo pipefail
@@ -104,7 +104,28 @@ detect_platform() {
 version_gte() {
     local v1="$1"
     local v2="$2"
-    printf '%s\n%s\n' "$v2" "$v1" | sort -V -C 2>/dev/null
+
+    # GNU sort supports -V, BSD sort (macOS default) does not.
+    if sort -V </dev/null >/dev/null 2>&1; then
+        printf '%s\n%s\n' "$v2" "$v1" | sort -V -C
+        return
+    fi
+
+    local IFS='.'
+    local i
+    local -a a b
+    read -r -a a <<< "$v1"
+    read -r -a b <<< "$v2"
+
+    for ((i = ${#a[@]}; i < ${#b[@]}; i++)); do a[i]=0; done
+    for ((i = ${#b[@]}; i < ${#a[@]}; i++)); do b[i]=0; done
+
+    for ((i = 0; i < ${#a[@]}; i++)); do
+        ((10#${a[i]} > 10#${b[i]})) && return 0
+        ((10#${a[i]} < 10#${b[i]})) && return 1
+    done
+
+    return 0
 }
 
 # Retry a command up to 3 times with 5s delay
@@ -332,7 +353,7 @@ install_fonts() {
     mkdir -p "$font_dir"
 
     # Check if JetBrains Mono is already installed
-    if find "$font_dir" -maxdepth 1 -name "JetBrainsMono*.ttf" -o -name "JetBrainsMono*.otf" 2>/dev/null | grep -q .; then
+    if find "$font_dir" -maxdepth 1 \( -name "JetBrainsMono*.ttf" -o -name "JetBrainsMono*.otf" \) 2>/dev/null | grep -q .; then
         success "JetBrains Mono already installed"
         return 0
     fi
@@ -376,15 +397,11 @@ deploy_zshrc() {
 
     # Set platform-specific paths
     local pnpm_home
-    local fzf_base
-    local bun_path="${HOME}/.bun"
 
     if [[ "$OS_TYPE" == "darwin" ]]; then
         pnpm_home="${HOME}/Library/pnpm"
-        fzf_base="/usr/local/opt/fzf"
     else
         pnpm_home="${HOME}/.local/share/pnpm"
-        fzf_base="/usr/share/doc/fzf/examples"
     fi
 
     cat > "$HOME/.zshrc" << 'ZSHRC_EOF'
@@ -587,10 +604,10 @@ fi
 # ============================================================================
 
 # Check for updates once per day using a timestamp file
-local zinit_update_stamp="$HOME/.zinit-last-update"
-local update_interval=$((24 * 60 * 60)) # 24 hours in seconds
-local current_time=$(date +%s)
-local last_update=0
+zinit_update_stamp="$HOME/.zinit-last-update"
+update_interval=$((24 * 60 * 60)) # 24 hours in seconds
+current_time=$(date +%s)
+last_update=0
 
 # Get last update time (cross-platform: macOS uses stat -f %m, Linux uses stat -c %Y)
 if [[ -f "$zinit_update_stamp" ]]; then
@@ -1037,7 +1054,7 @@ gcof() {
         branch="$filtered"
         echo "gcof: checking out '$branch'" >&2
     else
-        branch=$(echo "$branches" | fzf --query "${1:-}" --preview 'git log -n 20 --color --oneline {}')
+        branch=$(echo "$filtered" | fzf --query "${1:-}" --preview 'git log -n 20 --color --oneline {}')
         if [[ -z "$branch" ]]; then
             return 0
         fi
@@ -1125,8 +1142,8 @@ setup_zinit_plugins() {
         source "$HOME/.local/share/zinit/zinit.git/zinit.zsh" 2>/dev/null
         source "$HOME/.zshrc" 2>/dev/null
         # Wait for turbo-loaded plugins (poll for completion, timeout at 15s)
-        local elapsed=0
-        local timeout=15
+        elapsed=0
+        timeout=15
         while [[ ! -d "$HOME/.local/share/zinit/plugins/zsh-users---zsh-history-substring-search" ]] && [[ $elapsed -lt $timeout ]]; do
             sleep 1
             elapsed=$((elapsed + 1))
@@ -1192,10 +1209,10 @@ verify_installation() {
         fi
         if version_gte "$ver" "$min_ver"; then
             success "$name installed ($ver)"
+            checks_passed=$((checks_passed + 1))
         else
             warning "$name version $ver < minimum $min_ver"
         fi
-        checks_passed=$((checks_passed + 1))
     }
 
     check_path() {
@@ -1228,7 +1245,7 @@ verify_installation() {
         font_dir="$HOME/.local/share/fonts"
     fi
     checks_total=$((checks_total + 1))
-    if find "$font_dir" -maxdepth 1 -name "JetBrainsMono*.ttf" -o -name "JetBrainsMono*.otf" 2>/dev/null | grep -q .; then
+    if find "$font_dir" -maxdepth 1 \( -name "JetBrainsMono*.ttf" -o -name "JetBrainsMono*.otf" \) 2>/dev/null | grep -q .; then
         success "JetBrains Mono installed"
         checks_passed=$((checks_passed + 1))
     else
@@ -1293,13 +1310,14 @@ reload_all_shells() {
                     kill "$old_pid" 2>/dev/null || true
                 fi
                 (
-                    echo $$ > "$lock_file"
+                    watcher_pid="${BASHPID:-$$}"
+                    echo "$watcher_pid" > "$lock_file"
                     while true; do
                         sleep 1
                         # If another watcher replaced us, exit
                         local current_owner
                         current_owner=$(cat "$lock_file" 2>/dev/null) || break
-                        [[ "$current_owner" == "$$" ]] || break
+                        [[ "$current_owner" == "$watcher_pid" ]] || break
                         local cmd
                         cmd=$(tmux display-message -t "$pane_id" -p '#{pane_current_command}' 2>/dev/null) || break
                         if [[ "$cmd" == "zsh" || "$cmd" == "-zsh" ]]; then
