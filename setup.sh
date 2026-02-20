@@ -482,8 +482,13 @@ setopt HIST_IGNORE_SPACE
 setopt HIST_REDUCE_BLANKS
 
 # Bind up/down arrows to history substring search (search history based on typed prefix)
-bindkey '^[[A' history-substring-search-up
-bindkey '^[[B' history-substring-search-down
+# Use both standard and application cursor escape sequences across common keymaps.
+for keymap in emacs viins vicmd; do
+    bindkey -M "$keymap" '^[[A' history-substring-search-up
+    bindkey -M "$keymap" '^[[B' history-substring-search-down
+    bindkey -M "$keymap" '^[OA' history-substring-search-up
+    bindkey -M "$keymap" '^[OB' history-substring-search-down
+done
 
 # Tmux integration - session management helpers (lazy loaded)
 zinit wait lucid for \
