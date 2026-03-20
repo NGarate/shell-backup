@@ -427,6 +427,7 @@ fi
 source "$HOME/.local/share/zinit/zinit.git/zinit.zsh"
 autoload -Uz _zinit
 (( ${+_comps} )) && _comps[zinit]=_zinit
+mkdir -p "$ZSH_CACHE_DIR/completions" 2>/dev/null || true
 
 # ============================================================================
 # Environment Setup (NVM, etc.)
@@ -490,19 +491,29 @@ for keymap in emacs viins vicmd; do
     bindkey -M "$keymap" '^[OB' history-substring-search-down
 done
 
-# Tmux integration - session management helpers (lazy loaded)
-zinit wait lucid for \
+# Tmux integration and optional OMZ helpers.
+# `wait` keeps startup fast, `silent` suppresses normal output, and `notify""`
+# only surfaces a message if the snippet fails to load.
+for snippet in \
     OMZP::tmux \
     OMZP::git \
     OMZP::bun \
     OMZP::alias-finder
+do
+    zinit ice wait lucid silent notify""
+    zinit snippet "$snippet"
+done
 
 # You Should Use - reminds you of existing aliases
 # pnpm support - aliases and completions (lazy loaded)
-zinit wait lucid light-mode for \
+for plugin in \
     ntnyq/omz-plugin-pnpm \
     ntnyq/omz-plugin-bun \
     MichaelAquilina/zsh-you-should-use
+do
+    zinit ice wait lucid silent notify"" light-mode
+    zinit light "$plugin"
+done
 
 # ============================================================================
 # User Configuration
@@ -1146,6 +1157,15 @@ setup_zinit_plugins() {
     zsh -c '
         source "$HOME/.local/share/zinit/zinit.git/zinit.zsh" 2>/dev/null
         source "$HOME/.zshrc" 2>/dev/null
+        mkdir -p "$ZSH_CACHE_DIR/completions" 2>/dev/null || true
+        for snippet in OMZP::tmux OMZP::git OMZP::bun OMZP::alias-finder; do
+            zinit ice silent
+            zinit snippet "$snippet" >/dev/null 2>&1 || true
+        done
+        for plugin in ntnyq/omz-plugin-pnpm ntnyq/omz-plugin-bun MichaelAquilina/zsh-you-should-use; do
+            zinit ice silent light-mode
+            zinit light "$plugin" >/dev/null 2>&1 || true
+        done
         # Wait for turbo-loaded plugins (poll for completion, timeout at 15s)
         elapsed=0
         timeout=15
