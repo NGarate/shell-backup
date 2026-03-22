@@ -28,7 +28,7 @@ readonly MIN_ZSH_VERSION="5.8"
 readonly MIN_TMUX_VERSION="3.0"
 
 # Tool versions
-readonly NVM_VERSION="0.40.1"
+readonly NVM_INSTALL_VERSION="0.40.1"
 readonly JB_MONO_VERSION="2.304"
 
 # Non-interactive flag (will be parsed after functions are defined)
@@ -1255,23 +1255,57 @@ setup_shell() {
 setup_nvm() {
     log "Setting up NVM (Node Version Manager)..."
 
-    if [[ -d "$HOME/.nvm" ]]; then
+    export NVM_DIR="$HOME/.nvm"
+    local restore_nounset=false
+
+    if [[ ! -d "$NVM_DIR" ]]; then
+        log "Installing NVM..."
+        curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_INSTALL_VERSION}/install.sh" | bash
+    else
         success "NVM already installed"
-        return 0
     fi
 
-    log "Installing NVM..."
-    curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh" | bash
+    if [[ ! -s "$NVM_DIR/nvm.sh" ]]; then
+        error "NVM installation is incomplete: $NVM_DIR/nvm.sh not found"
+    fi
+
+    # nvm.sh is not nounset-safe, so temporarily relax `set -u` while sourcing
+    # it and running the initial `nvm` commands.
+    if [[ -o nounset ]]; then
+        set +u
+        restore_nounset=true
+    fi
 
     # Source NVM for current session
-    export NVM_DIR="$HOME/.nvm"
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    # shellcheck disable=SC1090
+    \. "$NVM_DIR/nvm.sh"
 
-    log "Installing Node LTS via NVM..."
-    nvm install --lts
-    nvm use --lts
+    if ! command -v nvm >/dev/null 2>&1; then
+        error "Failed to load NVM from $NVM_DIR/nvm.sh"
+    fi
 
-    success "NVM and Node LTS installed"
+    local lts_version
+    lts_version=$(nvm version 'lts/*' 2>/dev/null || echo "N/A")
+
+    if [[ "$lts_version" == "N/A" ]]; then
+        log "Installing Node LTS via NVM..."
+        nvm install --lts
+    else
+        success "Node LTS already installed ($lts_version)"
+    fi
+
+    nvm alias default 'lts/*' >/dev/null 2>&1 || true
+    nvm use --lts >/dev/null
+
+    if [[ "$restore_nounset" == true ]]; then
+        set -u
+    fi
+
+    if ! command -v node >/dev/null 2>&1; then
+        error "Node LTS is still unavailable after NVM setup"
+    fi
+
+    success "NVM and Node LTS installed ($(node --version))"
 }
 
 ################################################################################
@@ -1400,6 +1434,7 @@ verify_installation() {
     check_versioned_cmd "tmux" "$MIN_TMUX_VERSION" \
         "$(tmux -V 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
 
+    check_cmd "node"
     check_cmd "starship"
     check_cmd "fzf"
     check_cmd "ghostty"
