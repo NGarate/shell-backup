@@ -74,6 +74,20 @@ command_exists() {
     command -v "$1" &>/dev/null
 }
 
+run_with_sudo() {
+    local description="$1"
+    shift
+
+    if sudo -n true 2>/dev/null; then
+        sudo "$@"
+    elif [[ -t 0 ]] && [[ "$NON_INTERACTIVE" != true ]]; then
+        sudo "$@"
+    else
+        warning "Skipping ${description}; sudo requires a password and no interactive TTY is available."
+        return 1
+    fi
+}
+
 detect_platform() {
     case "$(uname -s)" in
         Darwin*)
@@ -217,8 +231,11 @@ setup_package_manager() {
         fi
     elif [[ "$PKG_MANAGER" == "apt" ]]; then
         log "Running apt update..."
-        sudo apt-get update -qq
-        success "apt ready"
+        if run_with_sudo "apt update" apt-get update -qq; then
+            success "apt ready"
+        else
+            warning "Continuing without refreshing apt metadata"
+        fi
     fi
 }
 
@@ -253,9 +270,36 @@ install_core_tools() {
         done
     else
         # Ubuntu/Debian via apt
-        log "Installing tools via apt..."
-        sudo apt-get install -y -qq zsh tmux git curl unzip build-essential fontconfig
-        sudo apt-get install -y -qq fzf zoxide ripgrep fd-find wl-clipboard xclip command-not-found 2>/dev/null || true
+        local base_tools_missing=false
+        local extra_tools_missing=false
+
+        if ! command_exists zsh || ! command_exists tmux || ! command_exists git || ! command_exists curl || \
+           ! command_exists unzip || ! command_exists cc || ! command_exists make || ! command_exists fc-cache; then
+            base_tools_missing=true
+        fi
+
+        if ! command_exists fzf || ! command_exists zoxide || ! command_exists rg || \
+           { ! command_exists fd && ! command_exists fdfind; }; then
+            extra_tools_missing=true
+        fi
+
+        if [[ "$base_tools_missing" == true ]]; then
+            log "Installing base tools via apt..."
+            if ! run_with_sudo "base apt package installation" apt-get install -y -qq zsh tmux git curl unzip build-essential fontconfig; then
+                error "Required packages are missing and could not be installed without interactive sudo."
+            fi
+        else
+            success "Base apt packages already installed"
+        fi
+
+        if [[ "$extra_tools_missing" == true ]]; then
+            log "Installing additional tools via apt..."
+            if ! run_with_sudo "additional apt package installation" apt-get install -y -qq fzf zoxide ripgrep fd-find wl-clipboard xclip command-not-found; then
+                warning "Optional apt packages were not installed. Re-run with interactive sudo if any are missing."
+            fi
+        else
+            success "Additional apt packages already installed"
+        fi
 
         # Create fd symlink (fd-find package installs as fdfind)
         if command_exists fdfind && ! command_exists fd; then
@@ -390,6 +434,40 @@ install_fonts() {
 # 7. SHELL CONFIGURATION
 ################################################################################
 
+deploy_zshenv() {
+    log "Deploying .zshenv configuration..."
+
+    backup_file "$HOME/.zshenv"
+
+    cat > "$HOME/.zshenv" << 'ZSHENV_EOF'
+# ============================================================================
+# ZSH Environment Configuration
+# ============================================================================
+# Keep this file lightweight: it is loaded by every zsh invocation, including
+# non-interactive shells used by automation and helper scripts.
+
+load_env_files() {
+    local line
+
+    # Load only ~/.env so startup stays predictable and lightweight.
+    if [[ -f "$HOME/.env" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$line" ]] && continue
+            [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*= ]] || continue
+            export "$line" 2>/dev/null || true
+        done < "$HOME/.env"
+    fi
+}
+
+load_env_files
+
+ZSHENV_EOF
+
+    chmod 600 "$HOME/.zshenv"
+    success ".zshenv deployed"
+}
+
 deploy_zshrc() {
     log "Deploying .zshrc configuration..."
 
@@ -448,11 +526,64 @@ zinit light zsh-users/zsh-autosuggestions
 # Syntax highlighting - highlight commands as you type
 zinit light zsh-users/zsh-syntax-highlighting
 
-# FZF - fuzzy finder
-zinit light junegunn/fzf
+# FZF - use the package-managed binary and shell integration
+load_fzf_integration() {
+    command -v fzf >/dev/null 2>&1 || return 0
 
-# Node.js support - automatically load nvm when entering a node project
-zinit snippet OMZP::node
+    if fzf --zsh >/dev/null 2>&1; then
+        source <(fzf --zsh)
+        return 0
+    fi
+
+    local fzf_script
+
+    for fzf_script in \
+        "${FZF_BASE:-}/shell/completion.zsh" \
+        /usr/share/fzf/completion.zsh \
+        /usr/share/doc/fzf/examples/completion.zsh \
+        /opt/homebrew/opt/fzf/shell/completion.zsh \
+        /usr/local/opt/fzf/shell/completion.zsh
+    do
+        [[ -f "$fzf_script" ]] || continue
+        source "$fzf_script"
+        break
+    done
+
+    for fzf_script in \
+        "${FZF_BASE:-}/shell/key-bindings.zsh" \
+        /usr/share/fzf/key-bindings.zsh \
+        /usr/share/doc/fzf/examples/key-bindings.zsh \
+        /opt/homebrew/opt/fzf/shell/key-bindings.zsh \
+        /usr/local/opt/fzf/shell/key-bindings.zsh
+    do
+        [[ -f "$fzf_script" ]] || continue
+        source "$fzf_script"
+        break
+    done
+}
+
+load_fzf_integration
+
+# Node.js helper - keep the useful node docs command without relying on the
+# unstable OMZP::node snippet update path.
+node-docs() {
+    local section=${1:-all}
+
+    if ! command -v node >/dev/null 2>&1; then
+        echo "node is not installed" >&2
+        return 1
+    fi
+
+    local url="https://nodejs.org/docs/$(node --version)/api/${section}.html"
+
+    if command -v open >/dev/null 2>&1; then
+        open "$url"
+    elif command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "$url" >/dev/null 2>&1
+    else
+        printf '%s\n' "$url"
+    fi
+}
 
 # Command not found helper - suggests packages for missing commands
 if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -564,40 +695,8 @@ export PATH="$HOME/.local/bin:$PATH"
 # Environment Variables
 # ============================================================================
 
-# Load .env files from home directory
-# Priority: .env first, then all .env.* files
-load_env_files() {
-    local env_file
-    
-    # Load .env first (base configuration)
-    if [[ -f ~/.env ]]; then
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            # Skip comments and empty lines
-            [[ "$line" =~ ^[[:space:]]*# ]] && continue
-            [[ -z "$line" ]] && continue
-            # Validate line looks like VAR=value before exporting
-            [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*= ]] || continue
-            # Export the variable
-            export "$line" 2>/dev/null || true
-        done < ~/.env
-    fi
-    
-    # Load all .env.* files (including .env.local, .env.production, etc.)
-    local env_files=(~/.env.*(N))
-    for env_file in "${env_files[@]}"; do
-        [[ -f "$env_file" ]] || continue
-        
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            [[ "$line" =~ ^[[:space:]]*# ]] && continue
-            [[ -z "$line" ]] && continue
-            # Validate line looks like VAR=value before exporting
-            [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*= ]] || continue
-            export "$line" 2>/dev/null || true
-        done < "$env_file"
-    done
-}
-
-load_env_files
+# Environment variables are loaded from ~/.zshenv (using only ~/.env) so they
+# are available to both interactive shells and zsh-launched automation helpers.
 
 # ============================================================================
 # Tmux Auto-attach (Ghostty integration and SSH sessions)
@@ -619,32 +718,36 @@ fi
 # Auto-update Zinit plugins (once per day)
 # ============================================================================
 
-# Check for updates once per day using a timestamp file
-zinit_update_stamp="$HOME/.zinit-last-update"
-update_interval=$((24 * 60 * 60)) # 24 hours in seconds
-current_time=$(date +%s)
-last_update=0
+# Check for updates once per day using a timestamp file.
+# The installer sets SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE=1 to avoid racing a
+# background update while it is still provisioning plugins.
+if [[ -z "${SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE:-}" ]]; then
+    zinit_update_stamp="$HOME/.zinit-last-update"
+    update_interval=$((24 * 60 * 60)) # 24 hours in seconds
+    current_time=$(date +%s)
+    last_update=0
 
-# Get last update time (cross-platform: macOS uses stat -f %m, Linux uses stat -c %Y)
-if [[ -f "$zinit_update_stamp" ]]; then
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        last_update=$(stat -f %m "$zinit_update_stamp" 2>/dev/null || echo 0)
-    else
-        last_update=$(stat -c %Y "$zinit_update_stamp" 2>/dev/null || echo 0)
+    # Get last update time (cross-platform: macOS uses stat -f %m, Linux uses stat -c %Y)
+    if [[ -f "$zinit_update_stamp" ]]; then
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            last_update=$(stat -f %m "$zinit_update_stamp" 2>/dev/null || echo 0)
+        else
+            last_update=$(stat -c %Y "$zinit_update_stamp" 2>/dev/null || echo 0)
+        fi
     fi
-fi
 
-# Update if more than 24 hours have passed
-if (( current_time - last_update > update_interval )); then
-    # Run updates in background so shell starts immediately
-    (
-        # Update Zinit itself first
-        zinit self-update -q 2>/dev/null
-        # Update all plugins and OMZ snippets
-        zinit update --all -q 2>/dev/null
-        # Mark update as complete
-        touch "$zinit_update_stamp"
-    ) &!
+    # Update if more than 24 hours have passed
+    if (( current_time - last_update > update_interval )); then
+        # Run updates in background so shell starts immediately
+        (
+            # Update Zinit itself first
+            zinit self-update -q >/dev/null 2>&1
+            # Update all plugins and OMZ snippets
+            zinit update --all -q >/dev/null 2>&1
+            # Mark update as complete
+            touch "$zinit_update_stamp"
+        ) &!
+    fi
 fi
 
 
@@ -1154,7 +1257,7 @@ setup_zinit_plugins() {
 
     # Run zsh to download and install all plugins
     log "Installing plugins (this may take a minute)..."
-    zsh -c '
+    SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE=1 zsh -c '
         source "$HOME/.local/share/zinit/zinit.git/zinit.zsh" 2>/dev/null
         source "$HOME/.zshrc" 2>/dev/null
         mkdir -p "$ZSH_CACHE_DIR/completions" 2>/dev/null || true
@@ -1173,8 +1276,6 @@ setup_zinit_plugins() {
             sleep 1
             elapsed=$((elapsed + 1))
         done
-        # Force update to ensure all are installed (suppress compile hook warnings)
-        zinit update --all --parallel -q 2>/dev/null || true
     ' 2>/dev/null || true
 
     success "Zinit plugins installed"
@@ -1260,6 +1361,7 @@ verify_installation() {
     check_cmd "ghostty"
 
     check_path "Zinit" "$HOME/.local/share/zinit/zinit.git"
+    check_path ".zshenv" "$HOME/.zshenv"
     check_path ".zshrc" "$HOME/.zshrc"
 
     # Font check
@@ -1425,6 +1527,7 @@ main() {
     install_ghostty || true
     install_fonts || true
 
+    deploy_zshenv
     deploy_zshrc
     deploy_tmux_conf
     deploy_ghostty_config
