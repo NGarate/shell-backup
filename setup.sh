@@ -430,6 +430,39 @@ install_fonts() {
     fi
 }
 
+zinit_expected_assets() {
+    printf '%s|%s\n' \
+        "zinit plugin zsh-autosuggestions" "$HOME/.local/share/zinit/plugins/zsh-users---zsh-autosuggestions" \
+        "zinit plugin zsh-syntax-highlighting" "$HOME/.local/share/zinit/plugins/zsh-users---zsh-syntax-highlighting" \
+        "zinit plugin zsh-history-substring-search" "$HOME/.local/share/zinit/plugins/zsh-users---zsh-history-substring-search" \
+        "zinit plugin omz-plugin-pnpm" "$HOME/.local/share/zinit/plugins/ntnyq---omz-plugin-pnpm" \
+        "zinit plugin omz-plugin-bun" "$HOME/.local/share/zinit/plugins/ntnyq---omz-plugin-bun" \
+        "zinit plugin zsh-you-should-use" "$HOME/.local/share/zinit/plugins/MichaelAquilina---zsh-you-should-use" \
+        "zinit snippet OMZP::tmux" "$HOME/.local/share/zinit/snippets/OMZP::tmux" \
+        "zinit snippet OMZP::git" "$HOME/.local/share/zinit/snippets/OMZP::git" \
+        "zinit snippet OMZP::bun" "$HOME/.local/share/zinit/snippets/OMZP::bun" \
+        "zinit snippet OMZP::alias-finder" "$HOME/.local/share/zinit/snippets/OMZP::alias-finder"
+
+    if [[ "$OS_TYPE" == "darwin" ]]; then
+        printf '%s|%s\n' \
+            "zinit snippet OMZP::command-not-found" "$HOME/.local/share/zinit/snippets/OMZP::command-not-found"
+    fi
+}
+
+verify_zinit_assets() {
+    local name path missing=0
+
+    while IFS='|' read -r name path; do
+        [[ -n "$name" ]] || continue
+        if [[ ! -e "$path" ]]; then
+            warning "$name missing at $path"
+            missing=$((missing + 1))
+        fi
+    done < <(zinit_expected_assets)
+
+    [[ $missing -eq 0 ]]
+}
+
 ################################################################################
 # 7. SHELL CONFIGURATION
 ################################################################################
@@ -1257,26 +1290,37 @@ setup_zinit_plugins() {
 
     # Run zsh to download and install all plugins
     log "Installing plugins (this may take a minute)..."
-    SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE=1 zsh -c '
-        source "$HOME/.local/share/zinit/zinit.git/zinit.zsh" 2>/dev/null
-        source "$HOME/.zshrc" 2>/dev/null
-        mkdir -p "$ZSH_CACHE_DIR/completions" 2>/dev/null || true
+    if ! SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE=1 zsh -c '
+        source "$HOME/.local/share/zinit/zinit.git/zinit.zsh"
+        mkdir -p "${ZSH_CACHE_DIR:-$HOME/.cache/zsh}/completions"
+
+        zinit light zsh-users/zsh-autosuggestions
+        zinit light zsh-users/zsh-syntax-highlighting
+        zinit light zsh-users/zsh-history-substring-search
+
         for snippet in OMZP::tmux OMZP::git OMZP::bun OMZP::alias-finder; do
             zinit ice silent
-            zinit snippet "$snippet" >/dev/null 2>&1 || true
+            zinit snippet "$snippet" >/dev/null
         done
+
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            zinit ice silent
+            zinit snippet OMZP::command-not-found >/dev/null
+        fi
+
         for plugin in ntnyq/omz-plugin-pnpm ntnyq/omz-plugin-bun MichaelAquilina/zsh-you-should-use; do
             zinit ice silent light-mode
-            zinit light "$plugin" >/dev/null 2>&1 || true
+            zinit light "$plugin" >/dev/null
         done
-        # Wait for turbo-loaded plugins (poll for completion, timeout at 15s)
-        elapsed=0
-        timeout=15
-        while [[ ! -d "$HOME/.local/share/zinit/plugins/zsh-users---zsh-history-substring-search" ]] && [[ $elapsed -lt $timeout ]]; do
-            sleep 1
-            elapsed=$((elapsed + 1))
-        done
-    ' 2>/dev/null || true
+
+        exit 0
+    '; then
+        error "Zinit plugin bootstrap failed"
+    fi
+
+    if ! verify_zinit_assets; then
+        error "Zinit plugin bootstrap incomplete"
+    fi
 
     success "Zinit plugins installed"
 }
@@ -1363,6 +1407,10 @@ verify_installation() {
     check_path "Zinit" "$HOME/.local/share/zinit/zinit.git"
     check_path ".zshenv" "$HOME/.zshenv"
     check_path ".zshrc" "$HOME/.zshrc"
+    while IFS='|' read -r asset_name asset_path; do
+        [[ -n "$asset_name" ]] || continue
+        check_path "$asset_name" "$asset_path"
+    done < <(zinit_expected_assets)
 
     # Font check
     local font_dir
