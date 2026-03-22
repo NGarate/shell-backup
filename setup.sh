@@ -89,7 +89,9 @@ run_with_sudo() {
     local description="$1"
     shift
 
-    if sudo -n true 2>/dev/null; then
+    if [[ "$(id -u)" -eq 0 ]]; then
+        "$@"
+    elif sudo -n true 2>/dev/null; then
         sudo "$@"
     elif [[ -t 0 ]] && [[ "$NON_INTERACTIVE" != true ]]; then
         sudo "$@"
@@ -211,6 +213,10 @@ check_prerequisites() {
     success "curl/wget available"
 
     if ! command_exists git; then
+        if [[ "$PKG_MANAGER" == "apt" || "$PKG_MANAGER" == "brew" ]]; then
+            warning "git not found. It will be installed during core tool setup."
+            return 0
+        fi
         error "git not found. Please install git."
     fi
     success "git available"
@@ -260,7 +266,7 @@ install_core_tools() {
     if [[ "$OS_TYPE" == "darwin" ]]; then
         # macOS via Homebrew
         # Format: "package_name:command_name" - if no colon, command_name = package_name
-        local tools=("zsh" "tmux" "fzf" "zoxide" "ripgrep:rg" "fd:fd")
+        local tools=("git" "zsh" "tmux" "fzf" "zoxide" "ripgrep:rg" "fd:fd")
         local package_name command_name
         for tool_mapping in "${tools[@]}"; do
             if [[ "$tool_mapping" == *":"* ]]; then
