@@ -512,6 +512,13 @@ load_env_files() {
 
 load_env_files
 
+if command -v npm >/dev/null 2>&1; then
+    node_global_root=$(npm root -g 2>/dev/null || true)
+    if [[ -n "$node_global_root" ]] && [[ ":${NODE_PATH:-}:" != *":$node_global_root:"* ]]; then
+        export NODE_PATH="${NODE_PATH:+$NODE_PATH:}$node_global_root"
+    fi
+fi
+
 ZSHENV_EOF
 
     chmod 600 "$HOME/.zshenv"
