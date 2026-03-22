@@ -130,12 +130,28 @@ fd "*.ts"    # Find TypeScript files
 ## Configuration Files
 
 ```
-~/.zshrc                    # Zsh configuration
+~/.zshenv                   # Early env loading for all zsh shells
+~/.zshrc                    # Interactive Zsh configuration
 ~/.tmux.conf                # Tmux configuration
 ~/.config/starship.toml     # Starship prompt theme
 ~/.zsh/gcof.zsh             # Custom functions
 ~/.config/ghostty/config    # Ghostty terminal config
 ```
+
+### Machine-local environment variables
+
+Put machine-local secrets and environment variables in:
+
+```bash
+~/.env
+```
+
+`shell-backup` generates `~/.zshenv` to load **only** `~/.env`, so those variables are available to:
+- normal interactive zsh sessions
+- non-interactive zsh invocations
+- automation/helpers that spawn zsh to read the environment
+
+This keeps `~/.zshrc` focused on interactive shell behavior and avoids spreading secret-loading logic across multiple files.
 
 ### Customize After Installation
 
@@ -250,7 +266,7 @@ The setup script:
 2. Installs/updates package managers (Homebrew, apt)
 3. Installs zsh, tmux, starship, and 10+ dev tools
 4. Downloads and installs JetBrains Mono font
-5. Deploys embedded configuration files (.zshrc, .tmux.conf, starship.toml)
+5. Deploys embedded configuration files (.zshenv, .zshrc, .tmux.conf, starship.toml)
 6. Initializes Zinit and installs plugins
 7. Sets up tmux plugin manager and plugins
 8. Configures auto-update on shell startup (once per day)
