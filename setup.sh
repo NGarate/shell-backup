@@ -74,6 +74,17 @@ command_exists() {
     command -v "$1" &>/dev/null
 }
 
+get_zsh_path() {
+    local zsh_path
+    zsh_path=$(command -v zsh 2>/dev/null || true)
+
+    if [[ -z "$zsh_path" ]]; then
+        error "zsh not found in PATH"
+    fi
+
+    printf '%s\n' "$zsh_path"
+}
+
 run_with_sudo() {
     local description="$1"
     shift
@@ -803,6 +814,9 @@ deploy_tmux_conf() {
 
     backup_file "$HOME/.tmux.conf"
 
+    local zsh_path
+    zsh_path=$(get_zsh_path)
+
     # Detect clipboard command for current environment
     local clipboard_command
     clipboard_command=$(detect_clipboard_command)
@@ -818,10 +832,10 @@ set -g @custom_copy_command '$clipboard_command'
 "
     fi
 
-    cat > "$HOME/.tmux.conf" << TMUX_EOF
+cat > "$HOME/.tmux.conf" << TMUX_EOF
 new-session
 
-set-option -g default-shell /bin/zsh
+set-option -g default-shell $zsh_path
 set -g prefix C-a
 set -g escape-time 500
 set -g history-limit 25000
@@ -845,7 +859,7 @@ set -g @plugin 'tmux-plugins/tmux-resurrect'
 set -g @plugin 'tmux-plugins/tmux-yank'
 
 # Ensure shell loads profile configs
-set -g default-command "exec zsh -l"
+set -g default-command "exec $zsh_path -l"
 
 $clipboard_config
 # Plugins configuration
@@ -1228,23 +1242,19 @@ setup_shell() {
 
     # Make zsh default shell
     local zsh_path
-    if command_exists zsh; then
-        zsh_path=$(command -v zsh)
-        
-        # Check if zsh is already the default (handle different path formats)
-        if [[ "$SHELL" == *"zsh"* ]]; then
-            success "zsh is already the default shell"
-        elif [[ ! -t 0 ]] || [[ "$NON_INTERACTIVE" == true ]]; then
-            # Non-interactive: skip chsh to avoid hang (tty check OR explicit flag)
-            warning "Non-interactive mode detected. Skipping 'chsh' (would prompt for password)."
-            warning "To change shell manually, run: chsh -s $zsh_path"
-        else
-            log "Changing default shell to $zsh_path..."
-            chsh -s "$zsh_path"
-            success "Default shell changed to zsh"
-        fi
+    zsh_path=$(get_zsh_path)
+
+    # Check if zsh is already the default (handle different path formats)
+    if [[ "$SHELL" == *"zsh"* ]]; then
+        success "zsh is already the default shell"
+    elif [[ ! -t 0 ]] || [[ "$NON_INTERACTIVE" == true ]]; then
+        # Non-interactive: skip chsh to avoid hang (tty check OR explicit flag)
+        warning "Non-interactive mode detected. Skipping 'chsh' (would prompt for password)."
+        warning "To change shell manually, run: chsh -s $zsh_path"
     else
-        error "zsh not found in PATH"
+        log "Changing default shell to $zsh_path..."
+        chsh -s "$zsh_path"
+        success "Default shell changed to zsh"
     fi
 }
 
