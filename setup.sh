@@ -1367,19 +1367,28 @@ setup_tmux_plugins() {
     log "Setting up tmux plugin manager..."
 
     local tpm_dir="$HOME/.tmux/plugins/tpm"
+    local install_script="$tpm_dir/bin/install_plugins"
     
-    if [[ -d "$tpm_dir" ]]; then
+    if [[ ! -d "$tpm_dir" ]]; then
+        log "Installing tmux plugin manager (tpm)..."
+        mkdir -p "$HOME/.tmux/plugins"
+        retry git clone https://github.com/tmux-plugins/tpm "$tpm_dir"
+    else
         success "tmux plugin manager already installed"
-        return 0
     fi
 
-    log "Installing tmux plugin manager (tpm)..."
-    mkdir -p "$HOME/.tmux/plugins"
-    retry git clone https://github.com/tmux-plugins/tpm "$tpm_dir"
+    if [[ ! -x "$install_script" ]]; then
+        error "tmux plugin install script not found at $install_script"
+    fi
 
-    # Install plugins
-    log "Installing tmux plugins..."
-    "$tpm_dir/bin/install_plugins" 2>/dev/null || true
+    # Re-run plugin installation on every setup so newly declared plugins in
+    # .tmux.conf are installed on reruns too.
+    log "Syncing tmux plugins..."
+    if "$install_script" 2>/dev/null; then
+        success "tmux plugins synced"
+    else
+        warning "tmux plugin sync returned a non-zero status"
+    fi
 
     success "tmux plugin manager installed"
 }
