@@ -8,7 +8,7 @@ Complete reference guide for all aliases, keybindings, and shortcuts installed b
 
 - [Shell Navigation](#shell-navigation)
 - [Git Aliases](#git-aliases)
-- [Tmux Keybindings](#tmux-keybindings)
+- [Ghostty Keybindings](#ghostty-keybindings)
 - [History Navigation](#history-navigation)
 - [Fuzzy Finder (fzf)](#fuzzy-finder-fzf)
 - [Zoxide](#zoxide)
@@ -140,123 +140,17 @@ Complete reference guide for all aliases, keybindings, and shortcuts installed b
 
 ---
 
-## Tmux Keybindings
+## Ghostty Keybindings
 
-### Prefix Key
-
-**Prefix:** `Ctrl+A` (changed from default Ctrl+B)
-
-### Session Management
-
-| Key | Action |
-|-----|--------|
-| `Prefix + $` | Rename current session |
-| `Prefix + S` | Switch/choose session |
-| `Prefix + D` | Detach from session |
-| `Prefix + s` | List all sessions |
-| `Prefix + (` | Previous session |
-| `Prefix + )` | Next session |
-| `Prefix + L` | Switch to last session |
-
-### Window Management
-
-| Key | Action |
-|-----|--------|
-| `Prefix + c` | Create new window |
-| `Prefix + ,` | Rename current window |
-| `Prefix + &` | Kill current window |
-| `Prefix + n` | Next window |
-| `Prefix + p` | Previous window |
-| `Prefix + l` | Last window |
-| `Prefix + 0-9` | Switch to window number |
-| `Prefix + w` | List all windows (interactive) |
-| `Prefix + f` | Find window by name |
-| `Prefix + .` | Move window to another index |
-
-### Pane Management
-
-| Key | Action |
-|-----|--------|
-| `Prefix + %` | Split pane vertically (left/right) |
-| `Prefix + "` | Split pane horizontally (top/bottom) |
-| `Prefix + x` | Kill current pane |
-| `Prefix + z` | Toggle pane zoom (maximize) |
-| `Prefix + q` | Show pane numbers |
-| `Prefix + {` | Swap pane with previous |
-| `Prefix + }` | Swap pane with next |
-| `Prefix + !` | Break pane into new window |
-| `Prefix + ;` | Go to last active pane |
-
-### Pane Navigation
-
-| Key | Action |
-|-----|--------|
-| `Prefix + ↑` | Select pane above |
-| `Prefix + ↓` | Select pane below |
-| `Prefix + ←` | Select pane left |
-| `Prefix + →` | Select pane right |
-| `Prefix + o` | Cycle through panes |
-| `Prefix + Ctrl+o` | Rotate panes forward |
-| `Prefix + Alt+o` | Rotate panes backward |
-
-### Copy Mode
-
-System clipboard integration is fully supported via tmux-yank. Works on:
-- **macOS:** Native pbcopy/pbpaste
-- **Linux (Wayland):** Uses wl-copy (wl-clipboard)
-- **Linux (X11):** Uses xclip (auto-detected)
-- **Linux (Ubuntu):** Automatically installs both wl-clipboard and xclip
-
-| Key | Action |
-|-----|--------|
-| `Prefix + [` | Enter copy mode |
-| `Prefix + ]` | Paste from buffer |
-| `Prefix + =` | List paste buffers |
-| `Prefix + -` | Delete most recent buffer |
-
-**In Copy Mode (vi-style):**
-
-| Key | Action |
-|-----|--------|
-| `Space` | Begin selection |
-| `Enter` | Copy selection |
-| `q` | Quit copy mode |
-| `v` | Visual mode |
-| `y` | Yank selection |
-| `h/j/k/l` | Move cursor |
-| `w/b` | Next/previous word |
-| `0/$` | Start/end of line |
-| `gg/G` | Top/bottom of buffer |
-| `/` | Search forward |
-| `?` | Search backward |
-| `n/N` | Next/previous search result |
-
-### Resizing Panes
-
-| Key | Action |
-|-----|--------|
-| `Prefix + Alt+↑` | Resize pane up |
-| `Prefix + Alt+↓` | Resize pane down |
-| `Prefix + Alt+←` | Resize pane left |
-| `Prefix + Alt+→` | Resize pane right |
-
-### Layouts
-
-| Key | Action |
-|-----|--------|
-| `Prefix + Space` | Cycle through layouts |
-| `Prefix + Meta+1` | Even-horizontal layout |
-| `Prefix + Meta+2` | Even-vertical layout |
-| `Prefix + Meta+3` | Main-horizontal layout |
-| `Prefix + Meta+4` | Main-vertical layout |
-| `Prefix + Meta+5` | Tiled layout |
-
-### Fullscreen
+### Configured Keybindings
 
 | Platform | Key | Action |
 |----------|-----|--------|
 | macOS | `Cmd+Shift+F` | Toggle fullscreen |
 | Linux | `Alt+Shift+F` | Toggle fullscreen |
+| All | `Shift+Enter` | Send escaped newline for OpenCode |
+
+Ghostty tabs, splits, copy/paste, and window management use Ghostty's native defaults and application menus.
 
 ---
 
@@ -424,50 +318,15 @@ grbi HEAD~3            # Rebase last 3 commits
 # (in editor: pick/squash/fixup/reword/drop)
 ```
 
-### Tmux Workflow Examples
-
-```bash
-# Start tmux
-tmux new -s project    # Create named session
-tmux attach -t project # Attach to session
-
-# Common workflow inside tmux
-Prefix + c             # Create new window
-tmux rename-window api # Rename window
-Prefix + %             # Split vertically
-Prefix + "             # Split horizontally
-Prefix + Arrow         # Navigate panes
-Prefix + z             # Maximize current pane
-Prefix + x             # Close current pane
-
-# Copy text
-Prefix + [             # Enter copy mode
-Space                  # Start selection
-Enter                  # Copy selection
-Prefix + ]             # Paste
-```
-
----
-
 ## Quick Reference Card
 
 ### Most Used Commands
 
 ```
 Git:          gst  ga  gcmsg  gp  gco  gcb  glog  gdf
-Tmux:         Prefix+c  Prefix+%  Prefix+"  Prefix+Arrow  Prefix+z
+Ghostty:      Cmd+Shift+F (macOS)  Alt+Shift+F (Linux)  Shift+Enter
 Navigation:   z <dir>  Ctrl+R  Ctrl+T  Alt+C
 pnpm:         p  pa  pi  pr  prd
-```
-
-### Tmux Prefix: Ctrl+A
-
-```
-Sessions:  $ S D s ( ) L
-Windows:   c , & n p l 0-9 w f .
-Panes:     % " x z q { } ! ;  ↑↓←→ o
-Copy:      [ ] = -
-Layout:    Space M-1 M-2 M-3 M-4 M-5
 ```
 
 ---
@@ -491,12 +350,11 @@ source ~/.zshrc
 
 ### Modify Keybindings
 
-Edit `~/.zshrc` for zsh keybindings or `~/.tmux.conf` for tmux.
+Edit `~/.zshrc` for zsh keybindings or `~/.config/ghostty/config` for Ghostty keybindings.
 
 ### Learn More
 
 - `zinit help` - Zinit plugin manager
-- `tmux list-keys` - List all tmux keybindings
 - `bindkey` - List zsh keybindings
 - `alias` - List all aliases
 

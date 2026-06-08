@@ -230,17 +230,16 @@ ssh username@your-laptop-ip
 export TERM=xterm-256color
 ```
 
-### Tmux Won't Start Automatically
+### Remote Sessions Do Not Persist After Disconnect
 
-**Problem:** The .zshrc only auto-starts tmux in Ghostty terminal
+**Problem:** Interactive SSH commands stop when the SSH connection drops.
 
-**Solution:** Add to ~/.zshrc on the laptop:
+**Cause:** shell-backup no longer starts a terminal multiplexer automatically. Ghostty state restore only applies to local Ghostty windows on the laptop, not remote SSH sessions from Termux.
+
+**Solution:** Run long-lived commands as background jobs or services:
 
 ```bash
-# Auto-start tmux in SSH sessions too
-if [[ -z "$TMUX" && "$SSH_CONNECTION" != "" ]]; then
-    tmux new-session -A -s main
-fi
+nohup long-running-command > command.log 2>&1 &
 ```
 
 ### Keyboard Shortcuts Not Working
@@ -300,7 +299,6 @@ termux-reload-settings
 ### ✅ Works Well
 - Zsh with all plugins (autosuggestions, syntax highlighting)
 - Starship prompt with icons and colors
-- Tmux sessions and keybindings
 - FZF fuzzy finder
 - Vim/Neovim with colors
 - Git with colored output
@@ -311,6 +309,7 @@ termux-reload-settings
 - Some terminal emulators may handle colors slightly differently
 - Touch-based text selection can be tricky
 - No automatic font detection (must install Nerd Font manually)
+- No automatic interactive session persistence after SSH disconnects
 
 ### ❌ Not Applicable
 - Ghostty terminal (runs on laptop only)
@@ -325,7 +324,7 @@ termux-reload-settings
 2. **Enable auto-rotate** to switch between portrait/landscape
 3. **Use a Bluetooth keyboard** for heavy typing sessions
 4. **Set up SSH keys** to avoid typing password every time
-5. **Use tmux** to persist sessions when switching apps/disconnecting
+5. **Use background jobs or services** for commands that must survive disconnects
 6. **Install Termux:Widget** for quick shortcuts to common SSH commands
 
 ---

@@ -1,6 +1,6 @@
 # shell-backup
 
-A unified, cross-platform automation script that replicates a complete professional development environment with zsh, tmux, Ghostty, Starship, and 15+ essential tools in one command.
+A unified, cross-platform automation script that replicates a complete professional development environment with zsh, Ghostty, Starship, and 10+ essential tools in one command.
 
 ## Quick Start
 
@@ -30,10 +30,9 @@ chmod +x setup.sh
 - **Starship** - Fast, customizable shell prompt
 - **Custom functions** - Git fuzzy checkout (`gcof`), aliases, and utilities
 
-### Terminal & Multiplexing
+### Terminal
 
-- **tmux** - Terminal multiplexer with session management (6 plugins)
-- **Ghostty** - GPU-accelerated terminal emulator with session recovery
+- **Ghostty** - GPU-accelerated terminal emulator with native tabs and splits
 
 ### Developer Tools
 
@@ -51,9 +50,9 @@ chmod +x setup.sh
 
 ### Productivity Features
 
-- **Auto-save/restore tmux sessions** - Via tmux-resurrect + continuum
+- **Ghostty UI state restore** - macOS can restore windows, tabs, splits, and working directories
 - **Auto-update plugins** - Updates once per day when you open a new shell
-- **Clipboard integration** - tmux-yank for copy/paste
+- **Per-terminal command history** - Each terminal session keeps its own zsh history file
 - **Git shortcuts** - 40+ aliases + fuzzy branch checkout
 
 ## System Requirements
@@ -88,7 +87,6 @@ exec zsh
 
 # Verify installation
 zsh --version
-tmux -V
 starship --version
 
 # Try fuzzy finder
@@ -110,12 +108,6 @@ gca          # git commit --amend
 gp           # git push
 gpu          # git pull
 
-# Tmux
-tmux new-session -s dev   # Create new session
-tmux attach -t dev        # Attach to session
-Ctrl+A D                  # Detach from session
-Ctrl+A S                  # Browse sessions
-
 # Navigate faster
 z <folder>   # Jump to frequently used folder
 cd -         # Go to previous directory
@@ -132,10 +124,10 @@ fd "*.ts"    # Find TypeScript files
 ```
 ~/.zshenv                   # Early env loading for all zsh shells
 ~/.zshrc                    # Interactive Zsh configuration
-~/.tmux.conf                # Tmux configuration
 ~/.config/starship.toml     # Starship prompt theme
 ~/.zsh/gcof.zsh             # Custom functions
 ~/.config/ghostty/config    # Ghostty terminal config
+~/.cache/zsh/history-*      # Per-terminal zsh history files
 ```
 
 ### Machine-local environment variables
@@ -169,35 +161,18 @@ vim ~/.config/starship.toml
 exec zsh  # Reload
 ```
 
-**Edit tmux config:**
+**Edit Ghostty config:**
 
 ```bash
-vim ~/.tmux.conf
-tmux source ~/.tmux.conf  # Reload configuration
+vim ~/.config/ghostty/config
+# Restart Ghostty for settings that cannot reload at runtime
 ```
 
 **Important:** Config reload only affects the current session. For a fresh start:
 
 ```bash
-# Detach and reattach
-Ctrl+A D                    # Detach from session
-tmux attach                 # Reattach (applies new config)
-
-# Or kill and recreate session
-tmux kill-session -t <name> # Kill specific session
-tmux new                    # Create new session
-```
-
-**Customize status bar:**
-
-```bash
-# Change date/time format (default: Day DD Mon HH:MM)
-set -g status-right " %a %d %b %H:%M "
-
-# Alternative formats:
-# 12-hour time: set -g status-right " %a %d %b %I:%M %p "
-# With seconds: set -g status-right " %a %d %b %H:%M:%S "
-# US format:     set -g status-right " %a %m/%d %H:%M "
+# Reload shell configuration
+exec zsh
 ```
 
 **Add your own aliases:**
@@ -225,9 +200,6 @@ zinit update --all
 # Update Zinit itself
 zinit self-update
 
-# Update all tmux plugins
-cd ~/.tmux/plugins/tpm && ./bin/update_plugins all
-
 # Update Starship
 starship self update
 ```
@@ -248,9 +220,6 @@ See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for:
 # Plugins not loading after install?
 exec zsh
 
-# Tmux plugins not showing?
-cd ~/.tmux/plugins/tpm && ./bin/install_plugins
-
 # Font looks wrong?
 # Restart terminal, then check: Settings > Font > JetBrains Mono
 
@@ -264,14 +233,13 @@ The setup script:
 
 1. Detects your OS and architecture
 2. Installs/updates package managers (Homebrew, apt)
-3. Installs zsh, tmux, starship, and 10+ dev tools
+3. Installs zsh, Ghostty, Starship, pnpm, and core dev tools
 4. Downloads and installs JetBrains Mono font
-5. Deploys embedded configuration files (.zshenv, .zshrc, .tmux.conf, starship.toml)
+5. Deploys embedded configuration files (.zshenv, .zshrc, Ghostty config, starship.toml)
 6. Initializes Zinit and installs plugins
-7. Sets up tmux plugin manager and plugins
-8. Configures auto-update on shell startup (once per day)
-9. Verifies all installations
-10. Prints summary with next steps
+7. Configures auto-update on shell startup (once per day)
+8. Verifies all installations
+9. Prints summary with next steps
 
 **Key features:**
 
@@ -308,7 +276,6 @@ Before submitting a PR, verify on your OS:
 
 - [ ] Script runs without errors
 - [ ] All plugins load (check with `zinit list`)
-- [ ] Tmux plugins load (check with `Ctrl+A U`)
 - [ ] Starship prompt displays correctly
 - [ ] Fonts render correctly
 - [ ] Auto-update works (check logs after 24 hours)
@@ -330,7 +297,7 @@ Before submitting a PR, verify on your OS:
 ## Learn More
 
 - [Zinit documentation](https://github.com/zdharma-continuum/zinit)
-- [Tmux guide](https://github.com/tmux/tmux/wiki)
+- [Ghostty documentation](https://ghostty.org/docs)
 - [Starship configuration](https://starship.rs/config/)
 - [fzf examples](https://github.com/junegunn/fzf)
 

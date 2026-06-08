@@ -25,7 +25,6 @@ readonly NC='\033[0m' # No Color
 
 # Version requirements
 readonly MIN_ZSH_VERSION="5.8"
-readonly MIN_TMUX_VERSION="3.0"
 
 # Tool versions
 readonly NVM_INSTALL_VERSION="0.40.1"
@@ -266,7 +265,7 @@ install_core_tools() {
     if [[ "$OS_TYPE" == "darwin" ]]; then
         # macOS via Homebrew
         # Format: "package_name:command_name" - if no colon, command_name = package_name
-        local tools=("git" "zsh" "tmux" "fzf" "zoxide" "ripgrep:rg" "fd:fd")
+        local tools=("git" "zsh" "fzf" "zoxide" "ripgrep:rg" "fd:fd")
         local package_name command_name
         for tool_mapping in "${tools[@]}"; do
             if [[ "$tool_mapping" == *":"* ]]; then
@@ -290,7 +289,7 @@ install_core_tools() {
         local base_tools_missing=false
         local extra_tools_missing=false
 
-        if ! command_exists zsh || ! command_exists tmux || ! command_exists git || ! command_exists curl || \
+        if ! command_exists zsh || ! command_exists git || ! command_exists curl || \
            ! command_exists unzip || ! command_exists cc || ! command_exists make || ! command_exists fc-cache; then
             base_tools_missing=true
         fi
@@ -302,7 +301,7 @@ install_core_tools() {
 
         if [[ "$base_tools_missing" == true ]]; then
             log "Installing base tools via apt..."
-            if ! run_with_sudo "base apt package installation" apt-get install -y -qq zsh tmux git curl unzip build-essential fontconfig; then
+            if ! run_with_sudo "base apt package installation" apt-get install -y -qq zsh git curl unzip build-essential fontconfig; then
                 error "Required packages are missing and could not be installed without interactive sudo."
             fi
         else
@@ -420,31 +419,6 @@ install_ghostty() {
     success "Ghostty installed"
 }
 
-# Detect the appropriate clipboard command for the current environment
-detect_clipboard_command() {
-    if [[ "$OS_TYPE" == "darwin" ]]; then
-        # macOS uses pbcopy/pbpaste natively (tmux-yank handles this automatically)
-        echo ""
-    elif [[ -n "${WAYLAND_DISPLAY:-}" ]] && command_exists wl-copy; then
-        # Wayland session with wl-clipboard
-        echo "wl-copy"
-    elif [[ -n "${DISPLAY:-}" ]] && command_exists xclip; then
-        # X11 session with xclip
-        echo "xclip -selection clipboard -in"
-    elif [[ -n "${DISPLAY:-}" ]] && command_exists xsel; then
-        # X11 session with xsel fallback
-        echo "xsel --clipboard --input"
-    elif command_exists wl-copy; then
-        # Wayland available but WAYLAND_DISPLAY not set (e.g., in tmux over SSH)
-        echo "wl-copy"
-    elif command_exists xclip; then
-        # Generic fallback to xclip
-        echo "xclip -selection clipboard -in"
-    else
-        echo ""
-    fi
-}
-
 ################################################################################
 # 6. FONT INSTALLATION
 ################################################################################
@@ -502,7 +476,6 @@ zinit_expected_assets() {
         "zinit plugin omz-plugin-pnpm" "$HOME/.local/share/zinit/plugins/ntnyq---omz-plugin-pnpm" \
         "zinit plugin omz-plugin-bun" "$HOME/.local/share/zinit/plugins/ntnyq---omz-plugin-bun" \
         "zinit plugin zsh-you-should-use" "$HOME/.local/share/zinit/plugins/MichaelAquilina---zsh-you-should-use" \
-        "zinit snippet OMZP::tmux" "$HOME/.local/share/zinit/snippets/OMZP::tmux" \
         "zinit snippet OMZP::git" "$HOME/.local/share/zinit/snippets/OMZP::git" \
         "zinit snippet OMZP::bun" "$HOME/.local/share/zinit/snippets/OMZP::bun" \
         "zinit snippet OMZP::alias-finder" "$HOME/.local/share/zinit/snippets/OMZP::alias-finder"
@@ -708,11 +681,19 @@ fi
 # Load immediately (not async) so that keybindings work correctly
 zinit light zsh-users/zsh-history-substring-search
 
-# History settings (Share across sessions)
-export HISTFILE="$HOME/.zsh_history"
+# History settings (local to each terminal session)
+mkdir -p "$HOME/.cache/zsh" 2>/dev/null || true
+zsh_history_tty="${TTY:-session-$$}"
+zsh_history_tty="${zsh_history_tty#/dev/}"
+zsh_history_tty="${zsh_history_tty//\//_}"
+export HISTFILE="$HOME/.cache/zsh/history-${zsh_history_tty}"
+unset zsh_history_tty
 export HISTSIZE=100000
 export SAVEHIST=100000
-setopt SHARE_HISTORY
+unsetopt SHARE_HISTORY
+unsetopt INC_APPEND_HISTORY
+unsetopt INC_APPEND_HISTORY_TIME
+setopt APPEND_HISTORY
 setopt HIST_IGNORE_ALL_DUPS
 setopt HIST_IGNORE_SPACE
 setopt HIST_REDUCE_BLANKS
@@ -726,11 +707,10 @@ for keymap in emacs viins vicmd; do
     bindkey -M "$keymap" '^[OB' history-substring-search-down
 done
 
-# Tmux integration and optional OMZ helpers.
+# Optional OMZ helpers.
 # `wait` keeps startup fast, `silent` suppresses normal output, and `notify""`
 # only surfaces a message if the snippet fails to load.
 for snippet in \
-    OMZP::tmux \
     OMZP::git \
     OMZP::bun \
     OMZP::alias-finder
@@ -803,22 +783,6 @@ export PATH="$HOME/.local/bin:$PATH"
 # are available to both interactive shells and zsh-launched automation helpers.
 
 # ============================================================================
-# Tmux Auto-attach (Ghostty integration and SSH sessions)
-# ============================================================================
-
-# Auto-start tmux when opening Ghostty
-# Ghostty sets TERM to xterm-ghostty
-if [[ -z "$TMUX" && "$TERM" == xterm-ghostty* ]]; then
-    tmux new-session -A -s main
-fi
-
-# Auto-start tmux when connecting via SSH (from Termux/mobile)
-# Uses a separate session named "termux" to avoid conflicts with local sessions
-if [[ -z "$TMUX" && -n "$SSH_CONNECTION" ]]; then
-    tmux new-session -A -s termux
-fi
-
-# ============================================================================
 # Auto-update Zinit plugins (once per day)
 # ============================================================================
 
@@ -869,86 +833,6 @@ ZSHRC_EOF
     success ".zshrc deployed"
 }
 
-deploy_tmux_conf() {
-    log "Deploying .tmux.conf configuration..."
-
-    backup_file "$HOME/.tmux.conf"
-
-    local zsh_path
-    zsh_path=$(get_zsh_path)
-
-    # Detect clipboard command for current environment
-    local clipboard_command
-    clipboard_command=$(detect_clipboard_command)
-    
-    log "Clipboard command detected: ${clipboard_command:-"auto-detect (macOS/native)"}"
-
-    # Build clipboard configuration section
-    local clipboard_config=""
-    if [[ -n "$clipboard_command" ]]; then
-        clipboard_config="
-# Clipboard integration (auto-detected for $OS_TYPE)
-set -g @custom_copy_command '$clipboard_command'
-"
-    fi
-
-cat > "$HOME/.tmux.conf" << TMUX_EOF
-new-session
-
-set-option -g default-shell $zsh_path
-set -g prefix C-a
-set -g escape-time 500
-set -g history-limit 25000
-set -g base-index 1
-set -g pane-base-index 1
-set -g mouse on
-set -g renumber-windows on
-
-# Map escape sequences for pane navigation
-bind -r Left  select-pane -L
-bind -r Right select-pane -R
-
-bind -r Up    select-pane -U
-bind -r Down  select-pane -D
-
-# List of plugins
-set -g @plugin 'tmux-plugins/tpm'
-set -g @plugin 'tmux-plugins/tmux-sensible'
-set -g @plugin 'tmux-plugins/tmux-continuum'
-set -g @plugin 'tmux-plugins/tmux-resurrect'
-set -g @plugin 'tmux-plugins/tmux-yank'
-
-# Ensure shell loads profile configs
-set -g default-command "exec $zsh_path -l"
-
-$clipboard_config
-# Plugins configuration
-set -g @continuum-boot 'on'
-set -g @continuum-restore 'on'
-set -g @resurrect-capture-pane-contents 'on'
-
-# Custom status bar
-set -g status-style fg=white,bg=#265BCA
-set -g window-status-format " [#I]: #W "
-set -g window-status-current-format " [#I]: #W "
-setw -g window-status-style fg=white,bg=#265BCA
-setw -g window-status-current-style fg=black,bg=#E8DB57
-setw -g window-status-separator "|"
-set -g status-position bottom
-set -g status-interval 1
-set -g status-left "#{session_name} "
-set -g status-left-length 50
-set -g status-right " %a %d %b %H:%M "
-set -g status-right-length 30
-
-# Initialize TMUX plugin manager (keep this as the last line of .tmux.conf)!!!
-run '~/.tmux/plugins/tpm/tpm'
-TMUX_EOF
-
-    chmod 644 "$HOME/.tmux.conf"
-    success ".tmux.conf deployed"
-}
-
 deploy_ghostty_config() {
     log "Deploying Ghostty configuration..."
 
@@ -970,7 +854,8 @@ font-family = JetBrains Mono
 font-size = 13.5
 font-feature = +calt
 
-# Session recovery - Ghostty restores UI state (windows/tabs/splits)
+# macOS UI state restore: windows, tabs, splits, and working directories.
+# This does not resurrect running shell processes or command output.
 window-save-state = always
 shell-integration = detect
 
@@ -1402,7 +1287,7 @@ setup_zinit_plugins() {
         zinit light zsh-users/zsh-syntax-highlighting
         zinit light zsh-users/zsh-history-substring-search
 
-        for snippet in OMZP::tmux OMZP::git OMZP::bun OMZP::alias-finder; do
+        for snippet in OMZP::git OMZP::bun OMZP::alias-finder; do
             zinit ice silent
             zinit snippet "$snippet" >/dev/null
         done
@@ -1430,41 +1315,7 @@ setup_zinit_plugins() {
 }
 
 ################################################################################
-# 13. TMUX PLUGIN MANAGER SETUP
-################################################################################
-
-setup_tmux_plugins() {
-    log "Setting up tmux plugin manager..."
-
-    local tpm_dir="$HOME/.tmux/plugins/tpm"
-    local install_script="$tpm_dir/bin/install_plugins"
-    
-    if [[ ! -d "$tpm_dir" ]]; then
-        log "Installing tmux plugin manager (tpm)..."
-        mkdir -p "$HOME/.tmux/plugins"
-        retry git clone https://github.com/tmux-plugins/tpm "$tpm_dir"
-    else
-        success "tmux plugin manager already installed"
-    fi
-
-    if [[ ! -x "$install_script" ]]; then
-        error "tmux plugin install script not found at $install_script"
-    fi
-
-    # Re-run plugin installation on every setup so newly declared plugins in
-    # .tmux.conf are installed on reruns too.
-    log "Syncing tmux plugins..."
-    if "$install_script" 2>/dev/null; then
-        success "tmux plugins synced"
-    else
-        warning "tmux plugin sync returned a non-zero status"
-    fi
-
-    success "tmux plugin manager installed"
-}
-
-################################################################################
-# 14. VERIFICATION
+# 13. VERIFICATION
 ################################################################################
 
 verify_installation() {
@@ -1510,8 +1361,6 @@ verify_installation() {
 
     check_versioned_cmd "zsh" "$MIN_ZSH_VERSION" \
         "$(zsh --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
-    check_versioned_cmd "tmux" "$MIN_TMUX_VERSION" \
-        "$(tmux -V 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
 
     check_cmd "node"
     check_cmd "pnpm"
@@ -1546,83 +1395,8 @@ verify_installation() {
 }
 
 ################################################################################
-# 15. POST-INSTALLATION SUMMARY
+# 14. POST-INSTALLATION SUMMARY
 ################################################################################
-
-reload_all_shells() {
-    # Detect the current tmux session dynamically
-    local current_session
-    current_session=$(tmux display-message -p '#{session_name}' 2>/dev/null) || {
-        warning "Not running inside tmux - skipping shell reload"
-        return 0
-    }
-
-    log "Reloading all shells in tmux session '$current_session'..."
-
-    local current_pane
-    current_pane=$(tmux display-message -p '#{pane_id}' 2>/dev/null) || current_pane=""
-
-    local idle_count=0
-    local busy_panes=()
-
-    # Get all panes in the current session
-    while read pane_id current_cmd _pane_pid; do
-        # Skip the pane running this script
-        if [[ -n "$current_pane" && "$pane_id" == "$current_pane" ]]; then
-            continue
-        fi
-
-        # A pane is "idle" if the foreground process is zsh itself
-        if [[ "$current_cmd" == "zsh" || "$current_cmd" == "-zsh" ]]; then
-            tmux send-keys -t "$pane_id" "exec zsh" Enter 2>/dev/null && idle_count=$((idle_count + 1))
-        else
-            busy_panes+=("$pane_id")
-        fi
-    done < <(tmux list-panes -s -t "$current_session" -F '#{pane_id} #{pane_current_command} #{pane_pid}' 2>/dev/null)
-
-    if [[ $idle_count -gt 0 ]]; then
-        success "Reloaded $idle_count idle shell(s) immediately"
-    fi
-
-    # Spawn a background watcher for each busy pane that polls until idle, then reloads.
-    # Uses a lock file per pane so that repeated setup.sh runs don't queue multiple reloads.
-    if [[ ${#busy_panes[@]} -gt 0 ]]; then
-        local lock_dir="/tmp/shell-reload-locks"
-        mkdir -p "$lock_dir"
-        log "Watching ${#busy_panes[@]} busy shell(s) for reload when idle..."
-        (
-            for pane_id in "${busy_panes[@]}"; do
-                local lock_file="$lock_dir/${pane_id//\%/}"
-                # Kill any previous watcher for this pane
-                if [[ -f "$lock_file" ]]; then
-                    local old_pid
-                    old_pid=$(cat "$lock_file" 2>/dev/null)
-                    kill "$old_pid" 2>/dev/null || true
-                fi
-                (
-                    watcher_pid="${BASHPID:-$$}"
-                    echo "$watcher_pid" > "$lock_file"
-                    while true; do
-                        sleep 1
-                        # If another watcher replaced us, exit
-                        local current_owner
-                        current_owner=$(cat "$lock_file" 2>/dev/null) || break
-                        [[ "$current_owner" == "$watcher_pid" ]] || break
-                        local cmd
-                        cmd=$(tmux display-message -t "$pane_id" -p '#{pane_current_command}' 2>/dev/null) || break
-                        if [[ "$cmd" == "zsh" || "$cmd" == "-zsh" ]]; then
-                            tmux send-keys -t "$pane_id" "exec zsh" Enter 2>/dev/null
-                            rm -f "$lock_file"
-                            break
-                        fi
-                    done
-                ) &
-            done
-            wait
-        ) &
-        disown
-    fi
-}
 
 print_summary() {
     cat << 'SUMMARY_EOF'
@@ -1634,8 +1408,7 @@ print_summary() {
 Installed Components:
   ✓ zsh (default shell)
   ✓ Zinit plugin manager (9 plugins)
-  ✓ tmux with 6 plugins
-  ✓ Ghostty terminal (with session recovery)
+  ✓ Ghostty terminal with tabs and splits
   ✓ Starship modern prompt
   ✓ fzf, zoxide, ripgrep, fd
   ✓ NVM + Node.js LTS
@@ -1654,7 +1427,6 @@ Quick Start:
 Useful Commands:
   - View plugins: zinit plugins
   - View plugin report: zinit report
-  - View tmux status: tmux status-left
 
 Documentation & Logs:
   - Installation log: ~/.setup.log
@@ -1668,7 +1440,7 @@ SUMMARY_EOF
 }
 
 ################################################################################
-# 16. MAIN EXECUTION
+# 15. MAIN EXECUTION
 ################################################################################
 
 main() {
@@ -1694,7 +1466,6 @@ main() {
 
     deploy_zshenv
     deploy_zshrc
-    deploy_tmux_conf
     deploy_ghostty_config
     deploy_starship_config
     deploy_custom_functions
@@ -1702,12 +1473,8 @@ main() {
     setup_shell
     setup_nvm
     setup_zinit_plugins
-    setup_tmux_plugins
 
     verify_installation
-
-    # Reload all shells in the tmux session (idle ones immediately, busy ones scheduled)
-    reload_all_shells || true
 
     print_summary
 

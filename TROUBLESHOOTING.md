@@ -286,169 +286,40 @@ exec zsh
 
 ---
 
-### Tmux Issues
+### Ghostty Issues
 
-#### ❌ "command not found: tmux"
+#### ❌ Ghostty windows/tabs/splits do not restore
 
-**Problem:** tmux not installed
+**Problem:** Ghostty did not reopen the previous UI layout.
 
-**Solutions:**
-- **macOS:** `brew install tmux`
-- **Ubuntu:** `sudo apt install -y tmux`
-- **Fedora:** `sudo dnf install -y tmux`
-- **Arch:** `sudo pacman -S tmux`
+**Important:** `window-save-state = always` saves Ghostty UI state only: windows, tabs, splits, and working directories. It does not restore running shell processes, command output, or foreground applications.
 
----
-
-#### ❌ tmux plugins not loading
-
-**Problem:** tpm (tmux plugin manager) not initialized
+**Platform limitation:** Ghostty's `window-save-state` option is currently macOS-only. It has no effect on Linux.
 
 **Solutions:**
 ```bash
-# Check if tpm exists
-ls ~/.tmux/plugins/tpm/bin/
+# Confirm the generated config enables state restore
+grep "window-save-state" ~/.config/ghostty/config
 
-# Install plugins manually
-~/.tmux/plugins/tpm/bin/install_plugins
-
-# Or use tmux key binding
-tmux source ~/.tmux.conf
-# Then Ctrl+B Shift+I (capital I) to install
+# Confirm shell integration is enabled for working-directory restore
+grep "shell-integration" ~/.config/ghostty/config
 ```
+
+On macOS, quit Ghostty normally and reopen it. On Linux, use Ghostty tabs and splits for layout, but do not expect automatic layout restoration from `window-save-state`.
 
 ---
 
-#### ❌ "Sessions won't restore" or saved sessions lost
+#### ❌ Ghostty config changes not appearing
 
-**Problem:** tmux-resurrect/continuum not working
+**Problem:** Settings changed in `~/.config/ghostty/config` are not visible yet.
 
 **Solutions:**
 ```bash
-# Check resurrection dir exists
-ls ~/.local/share/tmux/resurrect/
+# Reopen Ghostty for settings that cannot reload at runtime
+ghostty --version
 
-# Manual save before closing tmux
-tmux send-keys -t <session> "run-shell ~/.tmux/plugins/tmux-resurrect/scripts/save.sh" Enter
-
-# Manually restore
-run-shell ~/.tmux/plugins/tmux-resurrect/scripts/restore.sh
-```
-
----
-
-#### ✅ Copy/paste integration (tmux-yank)
-
-**Status:** ✅ **FIXED** - System clipboard integration now works out of the box!
-
-**How it works:**
-The setup script automatically detects your display server and configures the appropriate clipboard tool:
-- **macOS:** Native pbcopy/pbpaste (no dependencies)
-- **Linux Wayland:** wl-copy (wl-clipboard package)
-- **Linux X11:** xclip (xclip package)
-- **Linux generic:** Uses available tool (prefers wl-copy, falls back to xclip)
-
-**Installation:**
-```bash
-# Both packages are automatically installed by setup.sh on Ubuntu
-sudo apt install -y wl-clipboard xclip  # Manual install if needed
-```
-
-**Usage:**
-1. Enter copy mode: `Prefix + [`
-2. Start selection: `Space` or `v`
-3. Select text with arrow keys
-4. Copy to clipboard: `Enter` or `y` (copies to system clipboard!)
-5. Paste anywhere: `Prefix + ]` or use system paste (Ctrl+V/Cmd+V)
-
-**Troubleshooting:**
-If it's not working after setup:
-```bash
-# 1. Reload tmux
-tmux source ~/.tmux.conf
-
-# 2. Verify clipboard tool is installed
-which wl-copy xclip pbcopy
-
-# 3. Check environment variables
-echo $WAYLAND_DISPLAY $DISPLAY
-
-# 4. Re-run setup to regenerate config with proper detection
-./setup.sh
-```
-
----
-
-#### ❌ Config changes not appearing after reload
-
-**Problem:** You ran `tmux source ~/.tmux.conf` but don't see the changes
-
-**Cause:** The reload command only affects certain settings in the current session. Some settings only take effect in new sessions.
-
-**Solutions:**
-```bash
-# Method 1: Reload (works for most settings)
-tmux source ~/.tmux.conf
-
-# Method 2: Detach and reattach (recommended for complete refresh)
-# Inside tmux:
-Ctrl+A D                    # Detach
-# In terminal:
-tmux attach                 # Reattach with fresh config
-
-# Method 3: Kill session and create new (complete reset)
-tmux kill-session -t main   # Kill your session
-tmux new -s main            # Create new session
-
-# Method 4: For all sessions, reload each one
-tmux list-sessions          # List all sessions
-tmux source ~/.tmux.conf -t <session-name>  # Reload specific session
-```
-
-**Note:** Status bar changes should show immediately after `tmux source ~/.tmux.conf`. If not, try Method 2 or 3 above.
-
----
-
-#### ❌ Status bar not showing date/time or wrong format
-
-**Problem:** The status-right configuration isn't applied or shows wrong format
-
-**Solutions:**
-```bash
-# Check current status bar configuration
-tmux show -g status-right
-
-# Reload tmux configuration
-tmux source ~/.tmux.conf
-
-# Verify the config file has the status-right line
-grep "status-right" ~/.tmux.conf
-
-# Should show: set -g status-right " %a %d %b %H:%M "
-
-# If missing, add it manually:
-echo 'set -g status-right " %a %d %b %H:%M "' >> ~/.tmux.conf
-echo 'set -g status-right-length 30' >> ~/.tmux.conf
-tmux source ~/.tmux.conf
-```
-
-**To customize the format:**
-```bash
-# Edit ~/.tmux.conf and change the status-right line:
-
-# Format codes:
-# %a = abbreviated weekday name (Mon, Tue, etc.)
-# %d = day of month (01-31)
-# %b = abbreviated month name (Jan, Feb, etc.)
-# %H = hour (24-hour format, 00-23)
-# %M = minute (00-59)
-# %I = hour (12-hour format)
-# %p = AM/PM
-
-# Examples:
-set -g status-right " %a %d %b %H:%M "     # Wed 04 Feb 14:30 (default)
-set -g status-right " %a %m/%d %I:%M %p "  # Wed 02/04 02:30 PM
-set -g status-right " %Y-%m-%d %H:%M:%S "  # 2026-02-04 14:30:45
+# Reload zsh settings inside an existing terminal
+exec zsh
 ```
 
 ---
@@ -838,13 +709,13 @@ sudo dnf install alacritty
 ```bash
 # Backup current config (optional)
 cp ~/.zshrc ~/.zshrc.backup
-cp ~/.tmux.conf ~/.tmux.conf.backup
+cp ~/.config/ghostty/config ~/.config/ghostty/config.backup
 
 # Remove all installed components
-rm ~/.zshrc ~/.zshenv ~/.tmux.conf ~/.config/starship.toml ~/.zsh/gcof.zsh 2>/dev/null
+rm ~/.zshrc ~/.zshenv ~/.config/ghostty/config ~/.config/starship.toml ~/.zsh/gcof.zsh 2>/dev/null
 
 # Remove plugin managers
-rm -rf ~/.local/share/zinit ~/.tmux/plugins 2>/dev/null
+rm -rf ~/.local/share/zinit 2>/dev/null
 
 # Reinstall
 ./setup.sh
@@ -861,7 +732,7 @@ tail -50 ~/.setup.log | grep -i error
 
 # Check specific component
 grep "zsh" ~/.setup.log
-grep "tmux" ~/.setup.log
+grep "ghostty" ~/.setup.log
 grep "starship" ~/.setup.log
 ```
 
@@ -876,7 +747,7 @@ uname -a
 zsh --version
 
 # Component versions
-tmux -V
+ghostty --version
 starship --version
 git --version
 
