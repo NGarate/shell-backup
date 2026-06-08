@@ -329,6 +329,53 @@ install_core_tools() {
     success "Core tools installed"
 }
 
+install_pnpm() {
+    log "Installing pnpm..."
+
+    local version
+
+    if [[ "$OS_TYPE" == "darwin" ]]; then
+        if brew list pnpm &>/dev/null; then
+            local outdated
+            outdated=$(brew outdated --quiet pnpm 2>/dev/null || true)
+            if [[ -n "$outdated" ]]; then
+                log "Upgrading pnpm via Homebrew..."
+                if ! brew upgrade pnpm; then
+                    warning "pnpm upgrade via Homebrew failed"
+                    return 1
+                fi
+            else
+                success "pnpm already current via Homebrew"
+            fi
+        else
+            log "Installing pnpm via Homebrew..."
+            if ! brew install pnpm; then
+                warning "pnpm installation via Homebrew failed"
+                return 1
+            fi
+        fi
+    else
+        if ! command_exists apt-cache || ! apt-cache show pnpm &>/dev/null; then
+            warning "pnpm is not available from configured apt repositories. Enable an apt source that provides pnpm, then re-run setup."
+            return 1
+        fi
+
+        log "Installing/updating pnpm via apt..."
+        if ! run_with_sudo "pnpm apt package installation" apt-get install -y -qq pnpm; then
+            warning "pnpm installation via apt failed. Re-run with interactive sudo if pnpm is missing."
+            return 1
+        fi
+    fi
+
+    version=$(pnpm --version 2>/dev/null || true)
+    if [[ -z "$version" ]]; then
+        warning "pnpm installation completed, but pnpm was not found in PATH"
+        return 1
+    fi
+
+    success "pnpm installed ($version)"
+}
+
 install_starship() {
     log "Installing Starship..."
 
@@ -1467,6 +1514,7 @@ verify_installation() {
         "$(tmux -V 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
 
     check_cmd "node"
+    check_cmd "pnpm"
     check_cmd "starship"
     check_cmd "fzf"
     check_cmd "ghostty"
@@ -1591,6 +1639,7 @@ Installed Components:
   ✓ Starship modern prompt
   ✓ fzf, zoxide, ripgrep, fd
   ✓ NVM + Node.js LTS
+  ✓ pnpm package manager
   ✓ JetBrains Mono font
   ✓ Auto-update on shell startup (once per day)
   ✓ Custom functions (gcof)
@@ -1638,6 +1687,7 @@ main() {
     check_prerequisites
     setup_package_manager
     install_core_tools
+    install_pnpm || true
     install_starship
     install_ghostty || true
     install_fonts || true

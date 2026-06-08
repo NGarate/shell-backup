@@ -511,12 +511,13 @@ alias pb='pnpm build'
 
 **Solutions:**
 ```bash
-# Via npm
-npm install -g pnpm
+# macOS (Homebrew)
+brew install pnpm
+brew upgrade pnpm
 
-# Or reinstall via NVM
-nvm install-latest-npm
-npm install -g pnpm
+# Ubuntu/Debian (apt)
+sudo apt update
+sudo apt install pnpm
 
 # Verify
 pnpm --version
