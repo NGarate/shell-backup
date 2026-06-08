@@ -4,7 +4,7 @@ This guide documents how to connect from an Android phone using Termux to a lapt
 
 ## Prerequisites
 
-- Ubuntu laptop/server with shell-backup script already installed and running
+- Ubuntu/Debian laptop/server with shell-backup script already installed and running
 - Android phone with Termux installed (from F-Droid recommended)
 
 ---
@@ -158,6 +158,15 @@ zinit list
 
 Should show all loaded plugins without errors.
 
+### 5. Yazi Starts
+
+```bash
+yazi --version
+ya pkg list
+```
+
+Yazi should open over SSH as a terminal UI. Image previews may vary by terminal support.
+
 ---
 
 ## Step 6: Optimize Termux for Better Experience
@@ -281,6 +290,9 @@ ssh laptop
 # Reload Termux settings after changes
 termux-reload-settings
 
+# Open Yazi on the remote host
+yazi
+
 # Quick install Nerd Font (creates ~/.termux, downloads, extracts, applies)
 mkdir -p ~/.termux && cd ~/.termux && \
 pkg install -y unzip curl 2>/dev/null; \
@@ -300,6 +312,7 @@ termux-reload-settings
 - Zsh with all plugins (autosuggestions, syntax highlighting)
 - Starship prompt with icons and colors
 - FZF fuzzy finder
+- Yazi terminal file manager
 - Vim/Neovim with colors
 - Git with colored output
 - All command-line tools (fzf, zoxide, ripgrep, fd)
@@ -310,6 +323,7 @@ termux-reload-settings
 - Touch-based text selection can be tricky
 - No automatic font detection (must install Nerd Font manually)
 - No automatic interactive session persistence after SSH disconnects
+- Yazi image previews depend on terminal capabilities and may not work over SSH
 
 ### ❌ Not Applicable
 - Ghostty terminal (runs on laptop only)
@@ -334,4 +348,5 @@ termux-reload-settings
 - [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) - General troubleshooting
 - [setup.sh](./setup.sh) - Main setup script
 - Starship config: `~/.config/starship.toml` on the laptop
+- Yazi config: `~/.config/yazi/` on the laptop
 - Zsh config: `~/.zshrc` on the laptop

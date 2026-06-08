@@ -28,6 +28,7 @@ Thumbs.db
 *~
 .AppleDouble
 .LSOverride
+.opencode/
 
 # Temporary files
 *.tmp

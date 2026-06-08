@@ -9,6 +9,7 @@ Complete reference guide for all aliases, keybindings, and shortcuts installed b
 - [Shell Navigation](#shell-navigation)
 - [Git Aliases](#git-aliases)
 - [Ghostty Keybindings](#ghostty-keybindings)
+- [Yazi](#yazi)
 - [History Navigation](#history-navigation)
 - [Fuzzy Finder (fzf)](#fuzzy-finder-fzf)
 - [Zoxide](#zoxide)
@@ -154,6 +155,28 @@ Ghostty tabs, splits, copy/paste, and window management use Ghostty's native def
 
 ---
 
+## Yazi
+
+Yazi uses its native default keybindings. shell-backup configures two plugins: Git status signs in the file list and a Starship-powered header prompt.
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `yazi` | Open Yazi file manager |
+| `ya pkg list` | List installed Yazi plugins |
+| `ya pkg install` | Install plugins from `~/.config/yazi/package.toml` |
+| `ya pkg upgrade` | Upgrade Yazi plugins |
+
+### Configured Plugins
+
+| Plugin | Effect |
+|--------|--------|
+| `yazi-rs/plugins:git` | Shows Git status signs beside files and directories |
+| `Rolv-Apneseth/starship` | Replaces the Yazi header with a Starship prompt |
+
+---
+
 ## History Navigation
 
 ### Arrow Keys (History Substring Search)
@@ -277,6 +300,8 @@ Zoxide is a smarter cd command that remembers your frequently used directories.
 | `rg` | Ripgrep - fast text search |
 | `fd` | Fast find alternative |
 | `fzf` | Fuzzy finder |
+| `yazi` | Terminal file manager |
+| `ya pkg list` | List Yazi plugins |
 | `btm` | System monitor (if installed) |
 | `exa` or `lsd` | Enhanced ls (if installed) |
 
@@ -325,6 +350,7 @@ grbi HEAD~3            # Rebase last 3 commits
 ```
 Git:          gst  ga  gcmsg  gp  gco  gcb  glog  gdf
 Ghostty:      Cmd+Shift+F (macOS)  Alt+Shift+F (Linux)  Shift+Enter
+Yazi:         yazi  ya pkg list  ya pkg upgrade
 Navigation:   z <dir>  Ctrl+R  Ctrl+T  Alt+C
 pnpm:         p  pa  pi  pr  prd
 ```
@@ -350,15 +376,17 @@ source ~/.zshrc
 
 ### Modify Keybindings
 
-Edit `~/.zshrc` for zsh keybindings or `~/.config/ghostty/config` for Ghostty keybindings.
+Edit `~/.zshrc` for zsh keybindings, `~/.config/ghostty/config` for Ghostty keybindings, or `~/.config/yazi/yazi.toml` for Yazi settings.
 
 ### Learn More
 
 - `zinit help` - Zinit plugin manager
+- `ya help` - Yazi helper CLI
+- `ya pkg list` - List Yazi plugins
 - `bindkey` - List zsh keybindings
 - `alias` - List all aliases
 
 ---
 
-**Last Updated:** 2026-02-04  
+**Last Updated:** 2026-06-08
 **For issues:** See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md)

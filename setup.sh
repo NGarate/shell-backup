@@ -2,7 +2,7 @@
 
 ################################################################################
 # SHELL-BACKUP: Development Environment Setup
-# Supports: macOS (Intel/Apple Silicon), Ubuntu/Debian (apt + snapd)
+# Supports: macOS Apple Silicon (arm64), Ubuntu/Debian Linux (amd64/arm64)
 # Version: 2.1.0
 ################################################################################
 
@@ -25,10 +25,12 @@ readonly NC='\033[0m' # No Color
 
 # Version requirements
 readonly MIN_ZSH_VERSION="5.8"
+readonly MIN_YAZI_VERSION="26.5.6"
 
 # Tool versions
 readonly NVM_INSTALL_VERSION="0.40.1"
 readonly JB_MONO_VERSION="2.304"
+readonly YAZI_VERSION="26.5.6"
 
 # Non-interactive flag (will be parsed after functions are defined)
 NON_INTERACTIVE=false
@@ -101,19 +103,31 @@ run_with_sudo() {
 }
 
 detect_platform() {
+    local machine
+    machine=$(uname -m)
+
     case "$(uname -s)" in
         Darwin*)
+            if [[ "$machine" != "arm64" && "$machine" != "aarch64" ]]; then
+                error "Unsupported macOS architecture: $machine. Only Apple Silicon (arm64) Macs are supported."
+            fi
             OS_TYPE="darwin"
             PKG_MANAGER="brew"
-            if [[ $(uname -m) == "arm64" ]]; then
-                ARCH="aarch64"
-            else
-                ARCH="x86_64"
-            fi
+            ARCH="arm64"
             ;;
         Linux*)
             OS_TYPE="linux"
-            ARCH=$(uname -m)
+            case "$machine" in
+                x86_64|amd64)
+                    ARCH="amd64"
+                    ;;
+                aarch64|arm64)
+                    ARCH="arm64"
+                    ;;
+                *)
+                    error "Unsupported Linux architecture: $machine. Only amd64/x86_64 and arm64/aarch64 are supported."
+                    ;;
+            esac
             if command_exists apt-get; then
                 PKG_MANAGER="apt"
             else
@@ -229,6 +243,8 @@ setup_package_manager() {
     log "Setting up package manager..."
 
     if [[ "$PKG_MANAGER" == "brew" ]]; then
+        export PATH="/opt/homebrew/bin:$PATH"
+
         if ! command_exists brew; then
             log "Installing Homebrew..."
             if [[ "$NON_INTERACTIVE" == true ]]; then
@@ -239,11 +255,6 @@ setup_package_manager() {
             success "Homebrew installed"
         else
             success "Homebrew already available"
-        fi
-        
-        # Ensure brew is in PATH for Apple Silicon Macs
-        if [[ "$ARCH" == "aarch64" ]]; then
-            export PATH="/opt/homebrew/bin:$PATH"
         fi
     elif [[ "$PKG_MANAGER" == "apt" ]]; then
         log "Running apt update..."
@@ -290,6 +301,7 @@ install_core_tools() {
         local extra_tools_missing=false
 
         if ! command_exists zsh || ! command_exists git || ! command_exists curl || \
+           ! command_exists file || \
            ! command_exists unzip || ! command_exists cc || ! command_exists make || ! command_exists fc-cache; then
             base_tools_missing=true
         fi
@@ -301,7 +313,7 @@ install_core_tools() {
 
         if [[ "$base_tools_missing" == true ]]; then
             log "Installing base tools via apt..."
-            if ! run_with_sudo "base apt package installation" apt-get install -y -qq zsh git curl unzip build-essential fontconfig; then
+            if ! run_with_sudo "base apt package installation" apt-get install -y -qq zsh git curl file unzip build-essential fontconfig; then
                 error "Required packages are missing and could not be installed without interactive sudo."
             fi
         else
@@ -391,6 +403,67 @@ install_starship() {
     fi
 
     success "Starship installed"
+}
+
+install_yazi() {
+    log "Installing Yazi..."
+
+    if [[ "$OS_TYPE" == "linux" ]]; then
+        export PATH="$HOME/.local/bin:$PATH"
+    fi
+
+    local installed_version
+    installed_version=$(yazi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+
+    if command_exists yazi && command_exists ya && [[ -n "$installed_version" ]] && version_gte "$installed_version" "$MIN_YAZI_VERSION"; then
+        success "Yazi already installed ($installed_version)"
+        return 0
+    fi
+
+    if [[ "$OS_TYPE" == "darwin" ]]; then
+        if brew list yazi &>/dev/null; then
+            log "Upgrading Yazi via Homebrew..."
+            brew upgrade yazi || true
+        else
+            log "Installing Yazi via Homebrew..."
+            brew install yazi
+        fi
+    else
+        local target
+        case "$ARCH" in
+            amd64)
+                target="x86_64-unknown-linux-gnu"
+                ;;
+            arm64)
+                target="aarch64-unknown-linux-gnu"
+                ;;
+            *)
+                error "Unsupported Linux architecture for Yazi release install: $ARCH"
+                ;;
+        esac
+
+        local download_url="https://github.com/sxyazi/yazi/releases/download/v${YAZI_VERSION}/yazi-${target}.zip"
+        local temp_dir
+        temp_dir=$(mktemp -d)
+
+        log "Downloading Yazi ${YAZI_VERSION}..."
+        retry curl -fsSL "$download_url" -o "$temp_dir/yazi.zip"
+
+        log "Installing Yazi binaries..."
+        unzip -q "$temp_dir/yazi.zip" -d "$temp_dir"
+        mkdir -p "$HOME/.local/bin"
+        cp "$temp_dir/yazi-${target}/yazi" "$HOME/.local/bin/yazi"
+        cp "$temp_dir/yazi-${target}/ya" "$HOME/.local/bin/ya"
+        chmod 755 "$HOME/.local/bin/yazi" "$HOME/.local/bin/ya"
+        rm -rf "$temp_dir"
+    fi
+
+    installed_version=$(yazi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+    if ! command_exists yazi || ! command_exists ya || [[ -z "$installed_version" ]] || ! version_gte "$installed_version" "$MIN_YAZI_VERSION"; then
+        error "Yazi ${MIN_YAZI_VERSION}+ and matching ya CLI are required"
+    fi
+
+    success "Yazi installed ($installed_version)"
 }
 
 install_ghostty() {
@@ -496,6 +569,26 @@ verify_zinit_assets() {
             missing=$((missing + 1))
         fi
     done < <(zinit_expected_assets)
+
+    [[ $missing -eq 0 ]]
+}
+
+yazi_expected_assets() {
+    printf '%s|%s\n' \
+        "Yazi git plugin" "$HOME/.config/yazi/plugins/git.yazi/main.lua" \
+        "Yazi starship plugin" "$HOME/.config/yazi/plugins/starship.yazi/main.lua"
+}
+
+verify_yazi_assets() {
+    local name path missing=0
+
+    while IFS='|' read -r name path; do
+        [[ -n "$name" ]] || continue
+        if [[ ! -e "$path" ]]; then
+            warning "$name missing at $path"
+            missing=$((missing + 1))
+        fi
+    done < <(yazi_expected_assets)
 
     [[ $missing -eq 0 ]]
 }
@@ -772,7 +865,7 @@ esac
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
-# Make Claude Code accessible
+# User-local binaries (Yazi on Linux, Claude Code, etc.)
 export PATH="$HOME/.local/bin:$PATH"
 
 # ============================================================================
@@ -879,7 +972,43 @@ GHOSTTY_EOF
 }
 
 ################################################################################
-# 8. STARSHIP CONFIGURATION
+# 8. YAZI CONFIGURATION
+################################################################################
+
+deploy_yazi_config() {
+    log "Deploying Yazi configuration..."
+
+    mkdir -p "$HOME/.config/yazi"
+
+    backup_file "$HOME/.config/yazi/init.lua"
+    backup_file "$HOME/.config/yazi/yazi.toml"
+
+    cat > "$HOME/.config/yazi/init.lua" << 'YAZI_INIT_EOF'
+require("git"):setup {
+    order = 1500,
+}
+
+require("starship"):setup()
+YAZI_INIT_EOF
+
+    cat > "$HOME/.config/yazi/yazi.toml" << 'YAZI_TOML_EOF'
+[[plugin.prepend_fetchers]]
+url = "*"
+run = "git"
+group = "git"
+
+[[plugin.prepend_fetchers]]
+url = "*/"
+run = "git"
+group = "git"
+YAZI_TOML_EOF
+
+    chmod 644 "$HOME/.config/yazi/init.lua" "$HOME/.config/yazi/yazi.toml"
+    success "Yazi configuration deployed"
+}
+
+################################################################################
+# 9. STARSHIP CONFIGURATION
 ################################################################################
 
 deploy_starship_config() {
@@ -1117,7 +1246,7 @@ STARSHIP_EOF
 }
 
 ################################################################################
-# 9. CUSTOM FUNCTIONS
+# 10. CUSTOM FUNCTIONS
 ################################################################################
 
 deploy_custom_functions() {
@@ -1179,7 +1308,7 @@ GCOF_EOF
 }
 
 ################################################################################
-# 10. SHELL SETUP
+# 11. SHELL SETUP
 ################################################################################
 
 setup_shell() {
@@ -1204,7 +1333,7 @@ setup_shell() {
 }
 
 ################################################################################
-# 11. NVM SETUP
+# 12. NVM SETUP
 ################################################################################
 
 setup_nvm() {
@@ -1264,7 +1393,7 @@ setup_nvm() {
 }
 
 ################################################################################
-# 12. ZINIT PLUGINS SETUP
+# 13. ZINIT PLUGINS SETUP
 ################################################################################
 
 setup_zinit_plugins() {
@@ -1315,7 +1444,53 @@ setup_zinit_plugins() {
 }
 
 ################################################################################
-# 13. VERIFICATION
+# 14. YAZI PLUGINS SETUP
+################################################################################
+
+setup_yazi_plugins() {
+    log "Setting up Yazi plugins..."
+
+    if [[ "$OS_TYPE" == "linux" ]]; then
+        export PATH="$HOME/.local/bin:$PATH"
+    fi
+    mkdir -p "$HOME/.config/yazi"
+
+    if ! command_exists ya; then
+        error "ya CLI not found; cannot install Yazi plugins"
+    fi
+
+    local package_file="$HOME/.config/yazi/package.toml"
+    local missing_plugins=()
+
+    backup_file "$package_file"
+
+    if [[ ! -f "$package_file" ]] || ! grep -qE 'use[[:space:]]*=[[:space:]]*"yazi-rs/plugins:git"' "$package_file"; then
+        missing_plugins+=("yazi-rs/plugins:git")
+    fi
+
+    if [[ ! -f "$package_file" ]] || ! grep -qE 'use[[:space:]]*=[[:space:]]*"Rolv-Apneseth/starship"' "$package_file"; then
+        missing_plugins+=("Rolv-Apneseth/starship")
+    fi
+
+    if [[ ${#missing_plugins[@]} -gt 0 ]]; then
+        log "Adding Yazi plugin packages..."
+        ya pkg add "${missing_plugins[@]}"
+    else
+        success "Yazi plugin packages already listed"
+    fi
+
+    log "Installing locked Yazi plugin packages..."
+    ya pkg install
+
+    if ! verify_yazi_assets; then
+        error "Yazi plugin bootstrap incomplete"
+    fi
+
+    success "Yazi plugins installed"
+}
+
+################################################################################
+# 15. VERIFICATION
 ################################################################################
 
 verify_installation() {
@@ -1341,6 +1516,10 @@ verify_installation() {
             warning "$name not found"
             return
         fi
+        if [[ -z "$ver" ]]; then
+            warning "$name version could not be detected"
+            return
+        fi
         if version_gte "$ver" "$min_ver"; then
             success "$name installed ($ver)"
             checks_passed=$((checks_passed + 1))
@@ -1361,20 +1540,29 @@ verify_installation() {
 
     check_versioned_cmd "zsh" "$MIN_ZSH_VERSION" \
         "$(zsh --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
+    check_versioned_cmd "yazi" "$MIN_YAZI_VERSION" \
+        "$(yazi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 
     check_cmd "node"
     check_cmd "pnpm"
     check_cmd "starship"
     check_cmd "fzf"
     check_cmd "ghostty"
+    check_cmd "ya"
 
     check_path "Zinit" "$HOME/.local/share/zinit/zinit.git"
     check_path ".zshenv" "$HOME/.zshenv"
     check_path ".zshrc" "$HOME/.zshrc"
+    check_path "Yazi init.lua" "$HOME/.config/yazi/init.lua"
+    check_path "Yazi yazi.toml" "$HOME/.config/yazi/yazi.toml"
     while IFS='|' read -r asset_name asset_path; do
         [[ -n "$asset_name" ]] || continue
         check_path "$asset_name" "$asset_path"
     done < <(zinit_expected_assets)
+    while IFS='|' read -r asset_name asset_path; do
+        [[ -n "$asset_name" ]] || continue
+        check_path "$asset_name" "$asset_path"
+    done < <(yazi_expected_assets)
 
     # Font check
     local font_dir
@@ -1395,7 +1583,7 @@ verify_installation() {
 }
 
 ################################################################################
-# 14. POST-INSTALLATION SUMMARY
+# 16. POST-INSTALLATION SUMMARY
 ################################################################################
 
 print_summary() {
@@ -1410,6 +1598,7 @@ Installed Components:
   ✓ Zinit plugin manager (9 plugins)
   ✓ Ghostty terminal with tabs and splits
   ✓ Starship modern prompt
+  ✓ Yazi file manager with git + Starship plugins
   ✓ fzf, zoxide, ripgrep, fd
   ✓ NVM + Node.js LTS
   ✓ pnpm package manager
@@ -1422,11 +1611,13 @@ Quick Start:
   2. Test shell: zinit plugins
   3. Try git alias: ga status
   4. Try pnpm shortcut: p --version
-  5. Try fuzzy finder: Ctrl+T in file path
+  5. Try Yazi: yazi
+  6. Try fuzzy finder: Ctrl+T in file path
 
 Useful Commands:
   - View plugins: zinit plugins
   - View plugin report: zinit report
+  - View Yazi plugins: ya pkg list
 
 Documentation & Logs:
   - Installation log: ~/.setup.log
@@ -1440,7 +1631,7 @@ SUMMARY_EOF
 }
 
 ################################################################################
-# 15. MAIN EXECUTION
+# 17. MAIN EXECUTION
 ################################################################################
 
 main() {
@@ -1461,18 +1652,21 @@ main() {
     install_core_tools
     install_pnpm || true
     install_starship
+    install_yazi
     install_ghostty || true
     install_fonts || true
 
     deploy_zshenv
     deploy_zshrc
     deploy_ghostty_config
+    deploy_yazi_config
     deploy_starship_config
     deploy_custom_functions
 
     setup_shell
     setup_nvm
     setup_zinit_plugins
+    setup_yazi_plugins
 
     verify_installation
 

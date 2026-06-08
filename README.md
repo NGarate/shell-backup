@@ -1,6 +1,6 @@
 # shell-backup
 
-A unified, cross-platform automation script that replicates a complete professional development environment with zsh, Ghostty, Starship, and 10+ essential tools in one command.
+A unified, cross-platform automation script that replicates a complete professional development environment with zsh, Ghostty, Starship, Yazi, and 10+ essential tools in one command.
 
 ## Quick Start
 
@@ -40,6 +40,7 @@ chmod +x setup.sh
 - **zoxide** - Smarter `cd` command with frecency
 - **ripgrep (rg)** - Fast text search
 - **fd** - User-friendly `find` alternative
+- **Yazi** - Terminal file manager with Git status and Starship prompt plugins
 - **NVM** - Node.js version manager
 - **pnpm** - Fast, disk-efficient package manager
 
@@ -53,31 +54,32 @@ chmod +x setup.sh
 - **Ghostty UI state restore** - macOS can restore windows, tabs, splits, and working directories
 - **Auto-update plugins** - Updates once per day when you open a new shell
 - **Per-terminal command history** - Each terminal session keeps its own zsh history file
+- **Yazi plugin integration** - Git file status signs and Starship-powered header prompt
 - **Git shortcuts** - 40+ aliases + fuzzy branch checkout
 
 ## System Requirements
 
 ### Minimum
 
-- **macOS 10.15+** (Intel or Apple Silicon) or **Ubuntu 20.04+**
+- **Apple Silicon macOS 12+** (M-series, arm64) or **Ubuntu/Debian** on **amd64/arm64**
 - **curl** or **wget**
 - **git**
 - **~500MB** disk space
 
 ### Recommended
 
-- **macOS 12+** or **Ubuntu 22.04+**
+- **macOS 14+** on Apple Silicon, **Ubuntu 22.04+**, or **Debian 12+** on amd64/arm64
 - **2GB+ RAM**
 
 ## Platform Support
 
-| OS | Version | Status | Notes |
+| OS | Architecture | Status | Notes |
 |---|---|---|---|
-| macOS | 10.15+ | ✅ Supported | Homebrew required |
-| Ubuntu | 20.04+ | ✅ Supported | apt-based |
-| Debian | 11+ | ✅ Supported | apt-based |
-| Fedora | 35+ | ✅ Supported | dnf-based |
-| Arch Linux | Latest | ✅ Supported | pacman-based |
+| macOS | arm64 only | ✅ Supported | Apple Silicon/M-series, Homebrew required |
+| Ubuntu/Debian | amd64/x86_64 | ✅ Supported | apt-based |
+| Ubuntu/Debian | arm64/aarch64 | ✅ Supported | apt-based |
+| macOS Intel | x86_64 | ❌ Unsupported | Not targeted by this script |
+| Other Linux architectures | any | ❌ Unsupported | Not targeted by this script |
 
 ## First Time After Installation
 
@@ -88,6 +90,8 @@ exec zsh
 # Verify installation
 zsh --version
 starship --version
+yazi --version
+ya pkg list
 
 # Try fuzzy finder
 Ctrl+R  # Search command history
@@ -115,6 +119,9 @@ cd -         # Go to previous directory
 # Search files
 rg "pattern" # ripgrep search
 fd "*.ts"    # Find TypeScript files
+
+# Browse files
+yazi         # Open terminal file manager
 ```
 
 **📚 See [SHORTCUTS.md](./SHORTCUTS.md) for complete reference of all aliases, keybindings, and shortcuts.**
@@ -125,6 +132,9 @@ fd "*.ts"    # Find TypeScript files
 ~/.zshenv                   # Early env loading for all zsh shells
 ~/.zshrc                    # Interactive Zsh configuration
 ~/.config/starship.toml     # Starship prompt theme
+~/.config/yazi/init.lua     # Yazi plugin setup
+~/.config/yazi/yazi.toml    # Yazi fetcher configuration
+~/.config/yazi/package.toml # Yazi plugin lockfile
 ~/.zsh/gcof.zsh             # Custom functions
 ~/.config/ghostty/config    # Ghostty terminal config
 ~/.cache/zsh/history-*      # Per-terminal zsh history files
@@ -168,6 +178,14 @@ vim ~/.config/ghostty/config
 # Restart Ghostty for settings that cannot reload at runtime
 ```
 
+**Edit Yazi config:**
+
+```bash
+vim ~/.config/yazi/init.lua
+vim ~/.config/yazi/yazi.toml
+ya pkg list
+```
+
 **Important:** Config reload only affects the current session. For a fresh start:
 
 ```bash
@@ -184,7 +202,7 @@ alias myalias="my command"
 
 ## Auto-Update
 
-Plugins are automatically updated **once per day** when you open a new shell:
+Zsh plugins are automatically updated **once per day** when you open a new shell:
 
 - Checks for updates on shell startup
 - Runs in background (doesn't block your prompt)
@@ -202,6 +220,9 @@ zinit self-update
 
 # Update Starship
 starship self update
+
+# Update Yazi plugins
+ya pkg upgrade
 ```
 
 ## Troubleshooting
@@ -210,6 +231,7 @@ See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for:
 
 - Plugins not loading
 - Font display issues
+- Yazi plugin issues
 - SSH key errors
 - Permission denied errors
 - Platform-specific issues
@@ -233,13 +255,14 @@ The setup script:
 
 1. Detects your OS and architecture
 2. Installs/updates package managers (Homebrew, apt)
-3. Installs zsh, Ghostty, Starship, pnpm, and core dev tools
+3. Installs zsh, Ghostty, Starship, Yazi, pnpm, and core dev tools
 4. Downloads and installs JetBrains Mono font
-5. Deploys embedded configuration files (.zshenv, .zshrc, Ghostty config, starship.toml)
+5. Deploys embedded configuration files (.zshenv, .zshrc, Ghostty config, Yazi config, starship.toml)
 6. Initializes Zinit and installs plugins
-7. Configures auto-update on shell startup (once per day)
-8. Verifies all installations
-9. Prints summary with next steps
+7. Installs Yazi plugins with `ya pkg`
+8. Configures auto-update on shell startup (once per day)
+9. Verifies all installations
+10. Prints summary with next steps
 
 **Key features:**
 
@@ -276,6 +299,8 @@ Before submitting a PR, verify on your OS:
 
 - [ ] Script runs without errors
 - [ ] All plugins load (check with `zinit list`)
+- [ ] Yazi plugins load (check with `ya pkg list`)
+- [ ] Yazi starts and shows Git status signs in a Git repository
 - [ ] Starship prompt displays correctly
 - [ ] Fonts render correctly
 - [ ] Auto-update works (check logs after 24 hours)
@@ -298,6 +323,8 @@ Before submitting a PR, verify on your OS:
 
 - [Zinit documentation](https://github.com/zdharma-continuum/zinit)
 - [Ghostty documentation](https://ghostty.org/docs)
+- [Yazi documentation](https://yazi-rs.github.io/docs/)
+- [Yazi plugin manager](https://yazi-rs.github.io/docs/cli/#pm)
 - [Starship configuration](https://starship.rs/config/)
 - [fzf examples](https://github.com/junegunn/fzf)
 

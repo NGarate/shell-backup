@@ -23,8 +23,6 @@ chmod +x setup.sh
 **Solutions:**
 - **macOS:** Install Homebrew first: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
 - **Ubuntu/Debian:** `sudo apt update && sudo apt install -y curl`
-- **Fedora/RHEL:** `sudo dnf install -y curl`
-- **Arch:** `sudo pacman -S curl`
 
 ---
 
@@ -65,9 +63,7 @@ brew --version
 
 **Solutions:**
 - **macOS:** `brew install git`
-- **Ubuntu:** `sudo apt install -y git`
-- **Fedora:** `sudo dnf install -y git`
-- **Arch:** `sudo pacman -S git`
+- **Ubuntu/Debian:** `sudo apt install -y git`
 
 ---
 
@@ -324,6 +320,84 @@ exec zsh
 
 ---
 
+### Yazi Issues
+
+#### ❌ "command not found: yazi" or "command not found: ya"
+
+**Problem:** Yazi or its helper CLI is not installed or not in `PATH`.
+
+**Solutions:**
+```bash
+# Re-run setup. Linux installs Yazi into ~/.local/bin.
+./setup.sh
+
+# Check PATH and versions
+echo $PATH
+yazi --version
+ya --version
+```
+
+On Linux, `~/.local/bin` must be in `PATH`. The generated `.zshrc` adds it automatically; reload with `exec zsh` after setup.
+
+---
+
+#### ❌ Yazi plugins not installed or not listed
+
+**Problem:** `git.yazi` or `starship.yazi` was not installed by `ya pkg`.
+
+**Solutions:**
+```bash
+# Check locked plugin packages
+ya pkg list
+
+# Reinstall locked plugins
+ya pkg install
+
+# Add missing packages manually if needed
+ya pkg add yazi-rs/plugins:git Rolv-Apneseth/starship
+
+# Check plugin directories
+ls ~/.config/yazi/plugins/git.yazi
+ls ~/.config/yazi/plugins/starship.yazi
+```
+
+---
+
+#### ❌ Git status signs do not show in Yazi
+
+**Problem:** The Git plugin is not loaded, the current directory is not a Git repository, or `git` is unavailable.
+
+**Solutions:**
+```bash
+# Confirm you are in a Git repository
+git status
+
+# Confirm Yazi config loads the plugin and fetchers
+grep "require(\"git\")" ~/.config/yazi/init.lua
+grep "run = \"git\"" ~/.config/yazi/yazi.toml
+
+# Reinstall plugins
+ya pkg install
+```
+
+---
+
+#### ❌ Starship prompt does not show in Yazi header
+
+**Problem:** The Yazi Starship plugin is not loaded or `starship` is not available in `PATH`.
+
+**Solutions:**
+```bash
+# Verify Starship and plugin config
+starship --version
+grep "require(\"starship\")" ~/.config/yazi/init.lua
+
+# Reinstall plugins
+ya pkg install
+```
+
+---
+
 ### Node/Package Manager Issues
 
 #### ❌ "command not found: node" or nvm not working
@@ -491,7 +565,7 @@ Ctrl+R
 ```bash
 # Ensure fzf installed
 brew install fzf  # macOS
-sudo apt install -y fzf  # Ubuntu
+sudo apt install -y fzf  # Ubuntu/Debian
 
 # Source fzf key bindings
 source <(fzf --zsh)
@@ -513,9 +587,7 @@ exec zsh
 ```bash
 # Install zoxide
 brew install zoxide  # macOS
-sudo apt install -y zoxide  # Ubuntu
-sudo dnf install -y zoxide  # Fedora
-sudo pacman -S zoxide  # Arch
+sudo apt install -y zoxide  # Ubuntu/Debian
 
 # Add to .zshrc
 eval "$(zoxide init zsh)"
@@ -560,9 +632,7 @@ rm ~/.local/share/zoxide/db.zo
 ```bash
 # Install ripgrep
 brew install ripgrep  # macOS
-sudo apt install -y ripgrep  # Ubuntu
-sudo dnf install -y ripgrep  # Fedora
-sudo pacman -S ripgrep  # Arch
+sudo apt install -y ripgrep  # Ubuntu/Debian
 
 # Verify
 rg --version
@@ -632,13 +702,9 @@ exec zsh
 **Solutions:**
 ```bash
 # Add Homebrew to PATH
-# For Apple Silicon (M1/M2/M3)
+# For Apple Silicon (M-series)
 echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
 eval "$(/opt/homebrew/bin/brew shellenv)"
-
-# For Intel Macs
-echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.zprofile
-source ~/.zprofile
 
 # Verify
 brew --version
@@ -677,14 +743,11 @@ su -c "./setup.sh"
 # macOS
 brew install --cask alacritty
 
-# Ubuntu (needs to compile from source)
+# Ubuntu/Debian (needs to compile from source)
 git clone https://github.com/alacritty/alacritty.git
 cd alacritty
 cargo build --release
 sudo mv target/release/alacritty /usr/local/bin/
-
-# Fedora
-sudo dnf install alacritty
 ```
 
 ---
@@ -710,9 +773,11 @@ sudo dnf install alacritty
 # Backup current config (optional)
 cp ~/.zshrc ~/.zshrc.backup
 cp ~/.config/ghostty/config ~/.config/ghostty/config.backup
+cp -R ~/.config/yazi ~/.config/yazi.backup
 
 # Remove all installed components
 rm ~/.zshrc ~/.zshenv ~/.config/ghostty/config ~/.config/starship.toml ~/.zsh/gcof.zsh 2>/dev/null
+rm -rf ~/.config/yazi ~/.local/bin/yazi ~/.local/bin/ya 2>/dev/null
 
 # Remove plugin managers
 rm -rf ~/.local/share/zinit 2>/dev/null
@@ -734,6 +799,7 @@ tail -50 ~/.setup.log | grep -i error
 grep "zsh" ~/.setup.log
 grep "ghostty" ~/.setup.log
 grep "starship" ~/.setup.log
+grep "yazi" ~/.setup.log
 ```
 
 ### Collect Diagnostic Info
@@ -749,6 +815,8 @@ zsh --version
 # Component versions
 ghostty --version
 starship --version
+yazi --version
+ya pkg list
 git --version
 
 # Check setup.log
