@@ -713,6 +713,35 @@ load_env_files() {
 
 load_env_files
 
+ensure_path_entry() {
+    local path_entry="$1"
+
+    [[ -d "$path_entry" ]] || return 0
+    case ":${PATH:-}:" in
+        *":$path_entry:"*) ;;
+        *) PATH="${PATH:+$PATH:}$path_entry" ;;
+    esac
+}
+
+# ~/.env may define PATH. Keep user-provided entries, but always restore the
+# system paths required by zsh startup and command-not-found handlers.
+for path_entry in \
+    "$HOME/.local/bin" \
+    /opt/homebrew/bin \
+    /opt/homebrew/sbin \
+    /usr/local/bin \
+    /usr/local/sbin \
+    /usr/bin \
+    /bin \
+    /usr/sbin \
+    /sbin
+do
+    ensure_path_entry "$path_entry"
+done
+export PATH
+unset path_entry
+unfunction ensure_path_entry 2>/dev/null || true
+
 if command -v npm >/dev/null 2>&1; then
     node_global_root=$(npm root -g 2>/dev/null || true)
     if [[ -n "$node_global_root" ]] && [[ ":${NODE_PATH:-}:" != *":$node_global_root:"* ]]; then
@@ -987,16 +1016,16 @@ if [[ -z "${SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE:-}" ]] && command -v zinit >/dev
     last_update=0
 
     shell_backup_mtime() {
-        local path="$1"
-        if [[ ! -e "$path" ]]; then
+        local target_path="$1"
+        if [[ ! -e "$target_path" ]]; then
             print 0
             return 0
         fi
 
         if [[ "$(uname -s)" == "Darwin" ]]; then
-            stat -f %m "$path" 2>/dev/null || print 0
+            stat -f %m "$target_path" 2>/dev/null || print 0
         else
-            stat -c %Y "$path" 2>/dev/null || print 0
+            stat -c %Y "$target_path" 2>/dev/null || print 0
         fi
     }
 
