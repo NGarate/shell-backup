@@ -952,6 +952,9 @@ done
 # Custom git function - fuzzy switch branch
 [[ -f ~/.zsh/gswf.zsh ]] && source ~/.zsh/gswf.zsh
 
+# Yazi launcher - keep shell in the directory where Yazi exits
+[[ -f ~/.zsh/y.zsh ]] && source ~/.zsh/y.zsh
+
 # Load aliases file
 [[ -f ~/.zsh_aliases ]] && source ~/.zsh_aliases
 
@@ -1471,6 +1474,37 @@ gswf() {
 GSWF_EOF
     chmod 644 "$HOME/.zsh/gswf.zsh"
     success "gswf.zsh function deployed"
+
+    cat > "$HOME/.zsh/y.zsh" << 'Y_EOF'
+# y - Yazi with cwd restore
+# Open Yazi and cd to the directory where it exits.
+
+# Remove any existing alias to prevent conflicts
+unalias y 2>/dev/null || true
+
+y() {
+    if ! command -v yazi >/dev/null 2>&1; then
+        echo "y: yazi is not installed" >&2
+        return 1
+    fi
+
+    local cwd_file cwd
+    cwd_file=$(mktemp "${TMPDIR:-/tmp}/yazi-cwd.XXXXXX") || return 1
+
+    yazi "$@" --cwd-file="$cwd_file"
+
+    if [[ -f "$cwd_file" ]]; then
+        cwd=$(<"$cwd_file")
+        rm -f "$cwd_file"
+
+        if [[ -n "$cwd" && "$cwd" != "$PWD" ]]; then
+            builtin cd -- "$cwd"
+        fi
+    fi
+}
+Y_EOF
+    chmod 644 "$HOME/.zsh/y.zsh"
+    success "y.zsh function deployed"
 }
 
 ################################################################################
@@ -1816,7 +1850,7 @@ Installed Components:
   ✓ pnpm package manager
   ✓ JetBrains Mono font
   ✓ Auto-update on shell startup (once per day)
-  ✓ Custom functions (gswf)
+  ✓ Custom functions (gswf, y)
 
 Quick Start:
   1. Close and reopen your terminal (or: exec zsh)
