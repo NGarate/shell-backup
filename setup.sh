@@ -1146,6 +1146,7 @@ deploy_yazi_config() {
 
     backup_file "$HOME/.config/yazi/init.lua"
     backup_file "$HOME/.config/yazi/yazi.toml"
+    backup_file "$HOME/.config/yazi/theme.toml"
 
     cat > "$HOME/.config/yazi/init.lua" << 'YAZI_INIT_EOF'
 require("git"):setup {
@@ -1167,7 +1168,134 @@ run = "git"
 group = "git"
 YAZI_TOML_EOF
 
-    chmod 644 "$HOME/.config/yazi/init.lua" "$HOME/.config/yazi/yazi.toml"
+    cat > "$HOME/.config/yazi/theme.toml" << 'YAZI_THEME_EOF'
+# Palette synced with starship.toml [palettes.old]
+
+[mgr]
+cwd = { fg = "#EDF2F4", bg = "#3F37C9", bold = true }
+find_keyword = { fg = "#FF4089", bold = true }
+find_position = { fg = "#177E89", italic = true }
+symlink_target = { fg = "#177E89" }
+marker_copied = { fg = "#417E38", bg = "#417E38" }
+marker_cut = { fg = "#8B1D2C", bg = "#8B1D2C" }
+marker_marked = { fg = "#FF4089", bg = "#FF4089" }
+marker_selected = { fg = "#B02B10", bg = "#B02B10" }
+count_copied = { fg = "#EDF2F4", bg = "#417E38" }
+count_cut = { fg = "#EDF2F4", bg = "#8B1D2C" }
+count_selected = { fg = "#EDF2F4", bg = "#B02B10" }
+border_symbol = "│"
+border_style = { fg = "#3D3D3D" }
+
+[indicator]
+parent = { fg = "#3D3D3D" }
+current = { fg = "#3F37C9" }
+preview = { fg = "#B02B10" }
+padding = { open = "▐", close = "▌" }
+
+[tabs]
+active = { fg = "#EDF2F4", bg = "#3F37C9", bold = true }
+inactive = { fg = "#EDF2F4", bg = "#3D3D3D" }
+sep_inner = { open = "", close = "" }
+sep_outer = { open = "", close = "" }
+
+[mode]
+normal_main = { fg = "#EDF2F4", bg = "#3F37C9", bold = true }
+normal_alt = { fg = "#3F37C9", bg = "reset" }
+select_main = { fg = "#EDF2F4", bg = "#B02B10", bold = true }
+select_alt = { fg = "#B02B10", bg = "reset" }
+unset_main = { fg = "#EDF2F4", bg = "#8B1D2C", bold = true }
+unset_alt = { fg = "#8B1D2C", bg = "reset" }
+
+[status]
+overall = { fg = "#EDF2F4", bg = "reset" }
+sep_left = { open = "", close = "" }
+sep_right = { open = "", close = "" }
+perm_type = { fg = "#EDF2F4", bg = "#3F37C9" }
+perm_read = { fg = "#EDF2F4", bg = "#417E38" }
+perm_write = { fg = "#EDF2F4", bg = "#B02B10" }
+perm_exec = { fg = "#EDF2F4", bg = "#C33C00" }
+perm_sep = { fg = "#3D3D3D" }
+progress_label = { fg = "#EDF2F4", bold = true }
+progress_normal = { fg = "#3F37C9", bg = "#3D3D3D" }
+progress_error = { fg = "#8B1D2C", bg = "#3D3D3D" }
+
+[which]
+cols = 3
+mask = { bg = "#3D3D3D" }
+cand = { fg = "#3F37C9", bold = true }
+rest = { fg = "#EDF2F4" }
+desc = { fg = "#EDF2F4" }
+separator = "    "
+separator_style = { fg = "#3D3D3D" }
+
+[confirm]
+border = { fg = "#3F37C9" }
+title = { fg = "#EDF2F4", bg = "#3F37C9", bold = true }
+body = { fg = "#EDF2F4" }
+list = { fg = "#EDF2F4" }
+btn_yes = { fg = "#EDF2F4", bg = "#B02B10", bold = true }
+btn_no = { fg = "#EDF2F4", bg = "#3D3D3D" }
+btn_labels = [" Yes ", " No "]
+
+[spot]
+border = { fg = "#3F37C9" }
+title = { fg = "#EDF2F4", bg = "#3F37C9", bold = true }
+tbl_col = { fg = "#EDF2F4", bg = "#3F37C9" }
+tbl_cell = { fg = "#EDF2F4", bg = "#3D3D3D" }
+
+[notify]
+title_info = { fg = "#EDF2F4", bg = "#3F37C9", bold = true }
+title_warn = { fg = "#EDF2F4", bg = "#C33C00", bold = true }
+title_error = { fg = "#EDF2F4", bg = "#8B1D2C", bold = true }
+
+[pick]
+border = { fg = "#3F37C9" }
+active = { fg = "#EDF2F4", bg = "#3F37C9", bold = true }
+inactive = { fg = "#EDF2F4" }
+
+[input]
+border = { fg = "#3F37C9" }
+title = { fg = "#EDF2F4", bg = "#3F37C9", bold = true }
+value = { fg = "#EDF2F4" }
+selected = { fg = "#EDF2F4", bg = "#B02B10" }
+
+[cmp]
+border = { fg = "#3F37C9" }
+active = { fg = "#EDF2F4", bg = "#3F37C9", bold = true }
+inactive = { fg = "#EDF2F4" }
+icon_file = "󰈔"
+icon_folder = ""
+icon_command = ""
+
+[tasks]
+border = { fg = "#3F37C9" }
+title = { fg = "#EDF2F4", bg = "#3F37C9", bold = true }
+hovered = { fg = "#EDF2F4", bg = "#3D3D3D" }
+
+[help]
+on = { fg = "#3F37C9", bold = true }
+run = { fg = "#B02B10" }
+desc = { fg = "#EDF2F4" }
+hovered = { fg = "#EDF2F4", bg = "#3D3D3D" }
+footer = { fg = "#EDF2F4", bg = "#3F37C9", bold = true }
+icon_info = "󰋼"
+icon_warn = ""
+icon_error = ""
+
+[filetype]
+rules = [
+    { url = "*/", fg = "#3F37C9", bold = true },
+    { url = "*", is = "exec", fg = "#417E38" },
+    { url = "*", is = "link", fg = "#177E89" },
+    { url = "*", is = "orphan", fg = "#8B1D2C" },
+    { mime = "image/*", fg = "#FF4089" },
+    { mime = "{audio,video}/*", fg = "#B02B10" },
+    { mime = "application/{zip,gzip,x-tar,x-bzip*,x-7z-compressed,x-rar}", fg = "#C33C00" },
+    { url = "*", fg = "#EDF2F4" },
+]
+YAZI_THEME_EOF
+
+    chmod 644 "$HOME/.config/yazi/init.lua" "$HOME/.config/yazi/yazi.toml" "$HOME/.config/yazi/theme.toml"
     success "Yazi configuration deployed"
 }
 
@@ -1801,6 +1929,7 @@ verify_installation() {
     check_path ".zshrc" "$HOME/.zshrc"
     check_path "Yazi init.lua" "$HOME/.config/yazi/init.lua"
     check_path "Yazi yazi.toml" "$HOME/.config/yazi/yazi.toml"
+    check_path "Yazi theme.toml" "$HOME/.config/yazi/theme.toml"
     while IFS='|' read -r asset_name asset_path; do
         [[ -n "$asset_name" ]] || continue
         check_path "$asset_name" "$asset_path"
@@ -1844,7 +1973,7 @@ Installed Components:
   ✓ Zinit plugin manager (9 plugins)
   ✓ Ghostty terminal with tabs and splits
   ✓ Starship modern prompt
-  ✓ Yazi file manager with git + Starship plugins
+  ✓ Yazi file manager with git + Starship plugins and Starship-matched theme
   ✓ fzf, zoxide, ripgrep, fd
   ✓ NVM + Node.js LTS
   ✓ pnpm package manager
