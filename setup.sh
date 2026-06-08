@@ -75,6 +75,47 @@ command_exists() {
     command -v "$1" &>/dev/null
 }
 
+ensure_user_local_bin_on_path() {
+    mkdir -p "$HOME/.local/bin"
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*) ;;
+        *) export PATH="$HOME/.local/bin:$PATH" ;;
+    esac
+}
+
+brew_install_or_upgrade() {
+    local package_name="$1"
+    local command_name="${2:-$1}"
+    local outdated
+
+    if ! command_exists brew; then
+        error "Homebrew is required to install $package_name"
+    fi
+
+    if brew list "$package_name" &>/dev/null; then
+        outdated=$(brew outdated --quiet "$package_name" 2>/dev/null || true)
+        if [[ -n "$outdated" ]]; then
+            log "Upgrading $package_name via Homebrew..."
+            if ! brew upgrade "$package_name"; then
+                warning "$package_name upgrade via Homebrew failed"
+                return 1
+            fi
+            success "$package_name upgraded via Homebrew"
+        else
+            success "$package_name already current via Homebrew"
+        fi
+    elif command_exists "$command_name"; then
+        warning "$command_name exists outside Homebrew; skipping Homebrew-managed update for $package_name"
+    else
+        log "Installing $package_name via Homebrew..."
+        if ! brew install "$package_name"; then
+            warning "$package_name installation via Homebrew failed"
+            return 1
+        fi
+        success "$package_name installed via Homebrew"
+    fi
+}
+
 get_zsh_path() {
     local zsh_path
     zsh_path=$(command -v zsh 2>/dev/null || true)
@@ -186,7 +227,8 @@ retry() {
         attempt=$((attempt + 1))
     done
 
-    error "Command failed after $max_attempts attempts: $*"
+    warning "Command failed after $max_attempts attempts: $*"
+    return 1
 }
 
 backup_file() {
@@ -256,6 +298,13 @@ setup_package_manager() {
         else
             success "Homebrew already available"
         fi
+
+        log "Updating Homebrew metadata..."
+        if brew update; then
+            success "Homebrew metadata updated"
+        else
+            warning "Homebrew metadata update failed; continuing with existing metadata"
+        fi
     elif [[ "$PKG_MANAGER" == "apt" ]]; then
         log "Running apt update..."
         if run_with_sudo "apt update" apt-get update -qq; then
@@ -287,18 +336,16 @@ install_core_tools() {
                 command_name="$tool_mapping"
             fi
 
-            if command_exists "$command_name" || brew list "$package_name" &>/dev/null; then
-                success "$package_name already installed"
-            else
-                log "Installing $package_name..."
-                brew install "$package_name"
-                success "$package_name installed"
-            fi
+            brew_install_or_upgrade "$package_name" "$command_name"
         done
     else
         # Ubuntu/Debian via apt
+        local base_packages=(zsh git curl file unzip build-essential fontconfig)
+        local extra_packages=(fzf zoxide ripgrep fd-find wl-clipboard xclip command-not-found)
+        local available_extra_packages=()
         local base_tools_missing=false
         local extra_tools_missing=false
+        local package
 
         if ! command_exists zsh || ! command_exists git || ! command_exists curl || \
            ! command_exists file || \
@@ -311,27 +358,43 @@ install_core_tools() {
             extra_tools_missing=true
         fi
 
-        if [[ "$base_tools_missing" == true ]]; then
-            log "Installing base tools via apt..."
-            if ! run_with_sudo "base apt package installation" apt-get install -y -qq zsh git curl file unzip build-essential fontconfig; then
+        log "Installing/updating base tools via apt..."
+        if ! run_with_sudo "base apt package installation/update" apt-get install -y -qq "${base_packages[@]}"; then
+            if [[ "$base_tools_missing" == true ]]; then
                 error "Required packages are missing and could not be installed without interactive sudo."
+            else
+                warning "Base apt packages are installed, but updates were skipped."
             fi
         else
-            success "Base apt packages already installed"
+            success "Base apt packages installed/updated"
         fi
 
-        if [[ "$extra_tools_missing" == true ]]; then
-            log "Installing additional tools via apt..."
-            if ! run_with_sudo "additional apt package installation" apt-get install -y -qq fzf zoxide ripgrep fd-find wl-clipboard xclip command-not-found; then
-                warning "Optional apt packages were not installed. Re-run with interactive sudo if any are missing."
+        for package in "${extra_packages[@]}"; do
+            if apt-cache show "$package" &>/dev/null; then
+                available_extra_packages+=("$package")
+            else
+                warning "Optional apt package '$package' is not available from configured repositories"
             fi
+        done
+
+        if [[ ${#available_extra_packages[@]} -eq 0 ]]; then
+            warning "No optional apt packages are available from configured repositories"
         else
-            success "Additional apt packages already installed"
+            log "Installing/updating additional tools via apt..."
+            if ! run_with_sudo "additional apt package installation/update" apt-get install -y -qq "${available_extra_packages[@]}"; then
+                if [[ "$extra_tools_missing" == true ]]; then
+                    warning "Optional apt packages were not installed. Re-run with interactive sudo if any are missing."
+                else
+                    warning "Optional apt packages are installed, but updates were skipped."
+                fi
+            else
+                success "Additional apt packages installed/updated"
+            fi
         fi
 
         # Create fd symlink (fd-find package installs as fdfind)
         if command_exists fdfind && ! command_exists fd; then
-            mkdir -p "$HOME/.local/bin"
+            ensure_user_local_bin_on_path
             ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"
             success "Created fd symlink (fdfind -> ~/.local/bin/fd)"
         fi
@@ -346,34 +409,41 @@ install_pnpm() {
     local version
 
     if [[ "$OS_TYPE" == "darwin" ]]; then
-        if brew list pnpm &>/dev/null; then
-            local outdated
-            outdated=$(brew outdated --quiet pnpm 2>/dev/null || true)
-            if [[ -n "$outdated" ]]; then
-                log "Upgrading pnpm via Homebrew..."
-                if ! brew upgrade pnpm; then
-                    warning "pnpm upgrade via Homebrew failed"
-                    return 1
-                fi
-            else
-                success "pnpm already current via Homebrew"
-            fi
-        else
-            log "Installing pnpm via Homebrew..."
-            if ! brew install pnpm; then
-                warning "pnpm installation via Homebrew failed"
-                return 1
-            fi
-        fi
-    else
-        if ! command_exists apt-cache || ! apt-cache show pnpm &>/dev/null; then
-            warning "pnpm is not available from configured apt repositories. Enable an apt source that provides pnpm, then re-run setup."
+        if ! brew_install_or_upgrade pnpm pnpm; then
             return 1
         fi
-
-        log "Installing/updating pnpm via apt..."
-        if ! run_with_sudo "pnpm apt package installation" apt-get install -y -qq pnpm; then
-            warning "pnpm installation via apt failed. Re-run with interactive sudo if pnpm is missing."
+    else
+        if command_exists apt-cache && apt-cache show pnpm &>/dev/null; then
+            log "Installing/updating pnpm via apt..."
+            if ! run_with_sudo "pnpm apt package installation" apt-get install -y -qq pnpm; then
+                warning "pnpm installation via apt failed. Re-run with interactive sudo if pnpm is missing."
+                return 1
+            fi
+        elif command_exists corepack; then
+            log "Installing/updating pnpm via Corepack..."
+            if ! corepack enable >/dev/null 2>&1 || ! corepack prepare pnpm@latest --activate; then
+                warning "pnpm setup via Corepack failed"
+                if command_exists npm; then
+                    warning "Falling back to npm global pnpm installation"
+                    if ! npm install -g pnpm; then
+                        warning "pnpm installation via npm failed"
+                        return 1
+                    fi
+                else
+                    return 1
+                fi
+            fi
+        elif command_exists pnpm; then
+            success "pnpm already installed ($(pnpm --version 2>/dev/null || true))"
+            return 0
+        elif command_exists npm; then
+            warning "corepack not found; installing pnpm globally with npm"
+            if ! npm install -g pnpm; then
+                warning "pnpm installation via npm failed"
+                return 1
+            fi
+        else
+            warning "pnpm is not available from apt and neither corepack nor npm is installed"
             return 1
         fi
     fi
@@ -390,17 +460,29 @@ install_pnpm() {
 install_starship() {
     log "Installing Starship..."
 
+    if [[ "$OS_TYPE" == "darwin" ]]; then
+        brew_install_or_upgrade starship starship
+        return 0
+    fi
+
     if command_exists starship; then
         success "Starship already installed ($(starship --version | head -1))"
         return 0
     fi
 
-    if [[ "$OS_TYPE" == "darwin" ]]; then
-        brew install starship
-    else
-        # Linux: use official installer
-        curl -sS https://starship.rs/install.sh | sh -s -- -y
-    fi
+    # Linux: install to ~/.local/bin to avoid sudo prompts in non-interactive runs.
+    ensure_user_local_bin_on_path
+    (
+        local temp_dir
+        temp_dir=$(mktemp -d)
+        trap "rm -rf '$temp_dir'" EXIT
+
+        if ! retry curl -fsSL https://starship.rs/install.sh -o "$temp_dir/starship-install.sh"; then
+            error "Failed to download Starship installer"
+        fi
+
+        sh "$temp_dir/starship-install.sh" -y -b "$HOME/.local/bin"
+    )
 
     success "Starship installed"
 }
@@ -409,25 +491,19 @@ install_yazi() {
     log "Installing Yazi..."
 
     if [[ "$OS_TYPE" == "linux" ]]; then
-        export PATH="$HOME/.local/bin:$PATH"
+        ensure_user_local_bin_on_path
     fi
 
     local installed_version
     installed_version=$(yazi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
 
-    if command_exists yazi && command_exists ya && [[ -n "$installed_version" ]] && version_gte "$installed_version" "$MIN_YAZI_VERSION"; then
+    if [[ "$OS_TYPE" != "darwin" ]] && command_exists yazi && command_exists ya && [[ -n "$installed_version" ]] && version_gte "$installed_version" "$MIN_YAZI_VERSION"; then
         success "Yazi already installed ($installed_version)"
         return 0
     fi
 
     if [[ "$OS_TYPE" == "darwin" ]]; then
-        if brew list yazi &>/dev/null; then
-            log "Upgrading Yazi via Homebrew..."
-            brew upgrade yazi || true
-        else
-            log "Installing Yazi via Homebrew..."
-            brew install yazi
-        fi
+        brew_install_or_upgrade yazi yazi
     else
         local target
         case "$ARCH" in
@@ -442,20 +518,24 @@ install_yazi() {
                 ;;
         esac
 
-        local download_url="https://github.com/sxyazi/yazi/releases/download/v${YAZI_VERSION}/yazi-${target}.zip"
-        local temp_dir
-        temp_dir=$(mktemp -d)
+        (
+            local download_url="https://github.com/sxyazi/yazi/releases/download/v${YAZI_VERSION}/yazi-${target}.zip"
+            local temp_dir
+            temp_dir=$(mktemp -d)
+            trap "rm -rf '$temp_dir'" EXIT
 
-        log "Downloading Yazi ${YAZI_VERSION}..."
-        retry curl -fsSL "$download_url" -o "$temp_dir/yazi.zip"
+            log "Downloading Yazi ${YAZI_VERSION}..."
+            if ! retry curl -fsSL "$download_url" -o "$temp_dir/yazi.zip"; then
+                error "Failed to download Yazi ${YAZI_VERSION}"
+            fi
 
-        log "Installing Yazi binaries..."
-        unzip -q "$temp_dir/yazi.zip" -d "$temp_dir"
-        mkdir -p "$HOME/.local/bin"
-        cp "$temp_dir/yazi-${target}/yazi" "$HOME/.local/bin/yazi"
-        cp "$temp_dir/yazi-${target}/ya" "$HOME/.local/bin/ya"
-        chmod 755 "$HOME/.local/bin/yazi" "$HOME/.local/bin/ya"
-        rm -rf "$temp_dir"
+            log "Installing Yazi binaries..."
+            unzip -q "$temp_dir/yazi.zip" -d "$temp_dir"
+            ensure_user_local_bin_on_path
+            cp "$temp_dir/yazi-${target}/yazi" "$HOME/.local/bin/yazi"
+            cp "$temp_dir/yazi-${target}/ya" "$HOME/.local/bin/ya"
+            chmod 755 "$HOME/.local/bin/yazi" "$HOME/.local/bin/ya"
+        )
     fi
 
     installed_version=$(yazi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
@@ -469,24 +549,25 @@ install_yazi() {
 install_ghostty() {
     log "Installing Ghostty..."
 
+    if [[ "$OS_TYPE" == "darwin" ]]; then
+        brew_install_or_upgrade ghostty ghostty
+        return 0
+    fi
+
     if command_exists ghostty; then
         success "Ghostty already installed"
         return 0
     fi
 
-    if [[ "$OS_TYPE" == "darwin" ]]; then
-        brew install ghostty
-    else
-        # Ubuntu: use snap for Ghostty
-        if command_exists snap; then
-            sudo snap install ghostty --classic || {
-                warning "Ghostty snap installation failed. You may need to install it manually."
-                return 1
-            }
-        else
-            warning "snap not found. Please install snapd: sudo apt install snapd"
+    # Ubuntu: use snap for Ghostty
+    if command_exists snap; then
+        run_with_sudo "Ghostty snap installation" snap install ghostty --classic || {
+            warning "Ghostty snap installation failed. You may need to install it manually."
             return 1
-        fi
+        }
+    else
+        warning "snap not found. Please install snapd: sudo apt install snapd"
+        return 1
     fi
 
     success "Ghostty installed"
@@ -515,13 +596,17 @@ install_fonts() {
 
     log "Downloading JetBrains Mono..."
 
-    (
-        local temp_dir=$(mktemp -d)
+    if ! (
+        local temp_dir
+        temp_dir=$(mktemp -d)
         trap "rm -rf '$temp_dir'" EXIT
 
         local download_url="https://github.com/JetBrains/JetBrainsMono/releases/download/v${JB_MONO_VERSION}/JetBrainsMono-${JB_MONO_VERSION}.zip"
 
-        retry curl -fsSL "$download_url" -o "$temp_dir/jetbrains-mono.zip"
+        if ! retry curl -fsSL "$download_url" -o "$temp_dir/jetbrains-mono.zip"; then
+            warning "JetBrains Mono download failed"
+            exit 1
+        fi
 
         log "Extracting fonts..."
         unzip -q "$temp_dir/jetbrains-mono.zip" -d "$temp_dir"
@@ -531,7 +616,10 @@ install_fonts() {
         find "$temp_dir" -name "JetBrainsMono-*.ttf" -exec cp {} "$font_dir/" \;
 
         success "JetBrains Mono installed to $font_dir"
-    )
+    ); then
+        warning "JetBrains Mono installation failed"
+        return 1
+    fi
 
     # Linux: refresh font cache
     if [[ "$OS_TYPE" == "linux" ]] && command_exists fc-cache; then
@@ -675,6 +763,7 @@ fi
 source "$HOME/.local/share/zinit/zinit.git/zinit.zsh"
 autoload -Uz _zinit
 (( ${+_comps} )) && _comps[zinit]=_zinit
+export ZSH_CACHE_DIR="${ZSH_CACHE_DIR:-$HOME/.cache/zsh}"
 mkdir -p "$ZSH_CACHE_DIR/completions" 2>/dev/null || true
 
 # ============================================================================
@@ -831,8 +920,8 @@ done
 # Only set if the SSH key exists (checked at shell startup)
 [[ -f ~/.ssh/id_ed25519 ]] && export GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
 
-# Custom git function - fuzzy checkout branch
-[[ -f ~/.zsh/gcof.zsh ]] && source ~/.zsh/gcof.zsh
+# Custom git function - fuzzy switch branch
+[[ -f ~/.zsh/gswf.zsh ]] && source ~/.zsh/gswf.zsh
 
 # Load aliases file
 [[ -f ~/.zsh_aliases ]] && source ~/.zsh_aliases
@@ -842,10 +931,14 @@ done
 # ============================================================================
 
 # Zoxide - smarter cd command
-eval "$(zoxide init zsh)"
+if command -v zoxide >/dev/null 2>&1; then
+    eval "$(zoxide init zsh)"
+fi
 
 # Starship prompt - modern, fast prompt
-eval "$(starship init zsh)"
+if command -v starship >/dev/null 2>&1; then
+    eval "$(starship init zsh)"
+fi
 
 # ============================================================================
 # Package Manager Setup
@@ -882,33 +975,74 @@ export PATH="$HOME/.local/bin:$PATH"
 # Check for updates once per day using a timestamp file.
 # The installer sets SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE=1 to avoid racing a
 # background update while it is still provisioning plugins.
-if [[ -z "${SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE:-}" ]]; then
+if [[ -z "${SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE:-}" ]] && command -v zinit >/dev/null 2>&1; then
+    zinit_update_dir="$HOME/.cache/shell-backup"
     zinit_update_stamp="$HOME/.zinit-last-update"
+    zinit_update_lock="$zinit_update_dir/zinit-update.lock"
+    zinit_update_log="$zinit_update_dir/zinit-update.log"
+    zinit_update_failed="$zinit_update_dir/zinit-update.failed"
     update_interval=$((24 * 60 * 60)) # 24 hours in seconds
+    lock_ttl=$((60 * 60)) # 1 hour; stale locks are removed
     current_time=$(date +%s)
     last_update=0
 
-    # Get last update time (cross-platform: macOS uses stat -f %m, Linux uses stat -c %Y)
-    if [[ -f "$zinit_update_stamp" ]]; then
+    shell_backup_mtime() {
+        local path="$1"
+        if [[ ! -e "$path" ]]; then
+            print 0
+            return 0
+        fi
+
         if [[ "$(uname -s)" == "Darwin" ]]; then
-            last_update=$(stat -f %m "$zinit_update_stamp" 2>/dev/null || echo 0)
+            stat -f %m "$path" 2>/dev/null || print 0
         else
-            last_update=$(stat -c %Y "$zinit_update_stamp" 2>/dev/null || echo 0)
+            stat -c %Y "$path" 2>/dev/null || print 0
+        fi
+    }
+
+    mkdir -p "$zinit_update_dir" 2>/dev/null || true
+
+    if [[ -f "$zinit_update_failed" ]]; then
+        zinit_failed_at=""
+        IFS= read -r zinit_failed_at < "$zinit_update_failed" 2>/dev/null || true
+        print -P "%F{220}[shell-backup] Last Zinit auto-update failed${zinit_failed_at:+ at $zinit_failed_at}. See $zinit_update_log%f"
+    fi
+
+    if [[ -f "$zinit_update_stamp" ]]; then
+        last_update=$(shell_backup_mtime "$zinit_update_stamp")
+    fi
+
+    # Touch the stamp before starting the background job so failed/offline
+    # updates are throttled too. This prevents every new terminal from spawning
+    # another updater when network or plugin hosts are unavailable.
+    if (( current_time - last_update > update_interval )); then
+        if [[ -d "$zinit_update_lock" ]]; then
+            lock_time=$(shell_backup_mtime "$zinit_update_lock")
+            if (( current_time - lock_time > lock_ttl )); then
+                command rm -rf "$zinit_update_lock" 2>/dev/null || true
+            fi
+        fi
+
+        if command mkdir "$zinit_update_lock" 2>/dev/null; then
+            command touch "$zinit_update_stamp" 2>/dev/null || true
+            (
+                {
+                    print "[$(date)] Starting Zinit update"
+                    if zinit self-update -q && zinit update --all -q; then
+                        print "[$(date)] Zinit update completed"
+                        command rm -f "$zinit_update_failed" 2>/dev/null || true
+                    else
+                        print "[$(date)] Zinit update failed"
+                        date '+%Y-%m-%d %H:%M:%S' > "$zinit_update_failed" 2>/dev/null || true
+                    fi
+                } >> "$zinit_update_log" 2>&1
+                command rmdir "$zinit_update_lock" 2>/dev/null || command rm -rf "$zinit_update_lock" 2>/dev/null || true
+            ) &!
         fi
     fi
 
-    # Update if more than 24 hours have passed
-    if (( current_time - last_update > update_interval )); then
-        # Run updates in background so shell starts immediately
-        (
-            # Update Zinit itself first
-            zinit self-update -q >/dev/null 2>&1
-            # Update all plugins and OMZ snippets
-            zinit update --all -q >/dev/null 2>&1
-            # Mark update as complete
-            touch "$zinit_update_stamp"
-        ) &!
-    fi
+    unfunction shell_backup_mtime 2>/dev/null || true
+    unset zinit_update_dir zinit_update_stamp zinit_update_lock zinit_update_log zinit_update_failed zinit_failed_at update_interval lock_ttl current_time last_update lock_time
 fi
 
 
@@ -935,10 +1069,13 @@ deploy_ghostty_config() {
 
     # Platform-specific fullscreen keybinding
     local fullscreen_keybind
+    local platform_config
     if [[ "$OS_TYPE" == "darwin" ]]; then
         fullscreen_keybind="keybind = cmd+shift+f=toggle_fullscreen"
+        platform_config=$'# macOS UI state restore: windows, tabs, splits, and working directories.\n# This does not resurrect running shell processes or command output.\nwindow-save-state = always\n\n# macOS specific\nfont-thicken = true'
     else
         fullscreen_keybind="keybind = alt+shift+f=toggle_fullscreen"
+        platform_config="# Linux: Ghostty state restore is macOS-only, so no window-save-state is set."
     fi
 
     cat > "$HOME/.config/ghostty/config" << GHOSTTY_EOF
@@ -947,13 +1084,8 @@ font-family = JetBrains Mono
 font-size = 13.5
 font-feature = +calt
 
-# macOS UI state restore: windows, tabs, splits, and working directories.
-# This does not resurrect running shell processes or command output.
-window-save-state = always
+${platform_config}
 shell-integration = detect
-
-# macOS specific
-font-thicken = true
 
 # Fullscreen toggle (platform-specific)
 ${fullscreen_keybind}
@@ -1254,14 +1386,15 @@ deploy_custom_functions() {
 
     mkdir -p "$HOME/.zsh"
 
-    cat > "$HOME/.zsh/gcof.zsh" << 'GCOF_EOF'
-# gcof - Git Checkout Fuzzy
-# Fuzzy find and checkout git branches
+    cat > "$HOME/.zsh/gswf.zsh" << 'GSWF_EOF'
+# gswf - Git Switch Fuzzy
+# Fuzzy find and switch git branches
 
 # Remove any existing alias to prevent conflicts
-unalias gcof 2>/dev/null || true
+unalias gswf 2>/dev/null || true
 
-gcof() {
+gswf() {
+    local query="${1:-}"
     local branches
     branches=$(
         git pull --quiet 2>/dev/null;
@@ -1273,8 +1406,8 @@ gcof() {
     )
 
     local filtered
-    if [[ -n "${1:-}" ]]; then
-        filtered=$(echo "$branches" | grep -i -- "$1" || true)
+    if [[ -n "$query" ]]; then
+        filtered=$(echo "$branches" | grep -iF -- "$query" || true)
     else
         filtered="$branches"
     fi
@@ -1288,23 +1421,27 @@ gcof() {
 
     local branch
     if (( count == 0 )); then
-        echo "gcof: no branches matching '$1'" >&2
+        echo "gswf: no branches matching '$query'" >&2
         return 1
     elif (( count == 1 )); then
         branch="$filtered"
-        echo "gcof: checking out '$branch'" >&2
+        echo "gswf: switching to '$branch'" >&2
     else
-        branch=$(echo "$filtered" | fzf --query "${1:-}" --preview 'git log -n 20 --color --oneline {}')
+        if ! command -v fzf >/dev/null 2>&1; then
+            echo "gswf: fzf is required when multiple branches match" >&2
+            return 1
+        fi
+        branch=$(echo "$filtered" | fzf --query "$query" --preview 'git log -n 20 --color --oneline {}')
         if [[ -z "$branch" ]]; then
             return 0
         fi
     fi
 
-    git checkout "$branch"
+    git switch "$branch"
 }
-GCOF_EOF
-    chmod 644 "$HOME/.zsh/gcof.zsh"
-    success "gcof.zsh function deployed"
+GSWF_EOF
+    chmod 644 "$HOME/.zsh/gswf.zsh"
+    success "gswf.zsh function deployed"
 }
 
 ################################################################################
@@ -1319,7 +1456,7 @@ setup_shell() {
     zsh_path=$(get_zsh_path)
 
     # Check if zsh is already the default (handle different path formats)
-    if [[ "$SHELL" == *"zsh"* ]]; then
+    if [[ "${SHELL:-}" == *"zsh"* ]]; then
         success "zsh is already the default shell"
     elif [[ ! -t 0 ]] || [[ "$NON_INTERACTIVE" == true ]]; then
         # Non-interactive: skip chsh to avoid hang (tty check OR explicit flag)
@@ -1344,7 +1481,17 @@ setup_nvm() {
 
     if [[ ! -d "$NVM_DIR" ]]; then
         log "Installing NVM..."
-        curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_INSTALL_VERSION}/install.sh" | bash
+        (
+            local temp_dir
+            temp_dir=$(mktemp -d)
+            trap "rm -rf '$temp_dir'" EXIT
+
+            if ! retry curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_INSTALL_VERSION}/install.sh" -o "$temp_dir/nvm-install.sh"; then
+                error "Failed to download NVM installer"
+            fi
+
+            bash "$temp_dir/nvm-install.sh"
+        )
     else
         success "NVM already installed"
     fi
@@ -1368,14 +1515,33 @@ setup_nvm() {
         error "Failed to load NVM from $NVM_DIR/nvm.sh"
     fi
 
-    local lts_version
-    lts_version=$(nvm version 'lts/*' 2>/dev/null || echo "N/A")
+    local installed_lts_version current_version latest_lts_version package_source_version node_version_after
+    installed_lts_version=$(nvm version 'lts/*' 2>/dev/null || echo "N/A")
+    current_version=$(nvm current 2>/dev/null || echo "none")
+    latest_lts_version=$(nvm ls-remote --lts 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | tail -1 || true)
+    package_source_version=""
 
-    if [[ "$lts_version" == "N/A" ]]; then
-        log "Installing Node LTS via NVM..."
-        nvm install --lts
+    if [[ "$installed_lts_version" != "N/A" ]]; then
+        package_source_version="$installed_lts_version"
+    elif [[ "$current_version" == v* ]]; then
+        package_source_version="$current_version"
+    fi
+
+    if [[ -z "$latest_lts_version" ]]; then
+        if [[ "$installed_lts_version" == "N/A" ]]; then
+            warning "Could not determine latest remote Node LTS. Falling back to nvm install --lts."
+            nvm install --lts
+        else
+            warning "Could not determine latest remote Node LTS. Keeping installed LTS $installed_lts_version."
+        fi
+    elif [[ "$installed_lts_version" == "$latest_lts_version" ]]; then
+        success "Latest Node LTS already installed ($installed_lts_version)"
+    elif [[ -n "$package_source_version" ]]; then
+        warning "Node LTS will change from ${installed_lts_version} to ${latest_lts_version}. Global npm packages will be reinstalled from ${package_source_version} where possible."
+        nvm install "$latest_lts_version" --reinstall-packages-from="$package_source_version"
     else
-        success "Node LTS already installed ($lts_version)"
+        log "Installing latest Node LTS via NVM ($latest_lts_version)..."
+        nvm install "$latest_lts_version"
     fi
 
     nvm alias default 'lts/*' >/dev/null 2>&1 || true
@@ -1389,7 +1555,13 @@ setup_nvm() {
         error "Node LTS is still unavailable after NVM setup"
     fi
 
-    success "NVM and Node LTS installed ($(node --version))"
+    node_version_after=$(node --version)
+    if [[ -n "$package_source_version" ]] && [[ "$package_source_version" != "$node_version_after" ]]; then
+        success "NVM and latest Node LTS active ($node_version_after)"
+        warning "Node changed from $package_source_version to $node_version_after. Review global packages with: npm list -g --depth=0"
+    else
+        success "NVM and Node LTS installed ($node_version_after)"
+    fi
 }
 
 ################################################################################
@@ -1403,7 +1575,14 @@ setup_zinit_plugins() {
     if [[ ! -f $HOME/.local/share/zinit/zinit.git/zinit.zsh ]]; then
         log "Installing Zinit plugin manager..."
         command mkdir -p "$HOME/.local/share/zinit" && command chmod g-rwX "$HOME/.local/share/zinit"
-        retry git clone https://github.com/zdharma-continuum/zinit "$HOME/.local/share/zinit/zinit.git"
+        if ! retry git clone https://github.com/zdharma-continuum/zinit "$HOME/.local/share/zinit/zinit.git"; then
+            error "Failed to install Zinit plugin manager"
+        fi
+    fi
+
+    if verify_zinit_assets; then
+        success "Zinit plugins already installed"
+        return 0
     fi
 
     # Run zsh to download and install all plugins
@@ -1451,7 +1630,7 @@ setup_yazi_plugins() {
     log "Setting up Yazi plugins..."
 
     if [[ "$OS_TYPE" == "linux" ]]; then
-        export PATH="$HOME/.local/bin:$PATH"
+        ensure_user_local_bin_on_path
     fi
     mkdir -p "$HOME/.config/yazi"
 
@@ -1479,8 +1658,12 @@ setup_yazi_plugins() {
         success "Yazi plugin packages already listed"
     fi
 
-    log "Installing locked Yazi plugin packages..."
-    ya pkg install
+    if [[ ${#missing_plugins[@]} -gt 0 ]] || ! verify_yazi_assets; then
+        log "Installing locked Yazi plugin packages..."
+        ya pkg install
+    else
+        success "Yazi plugin assets already installed"
+    fi
 
     if ! verify_yazi_assets; then
         error "Yazi plugin bootstrap incomplete"
@@ -1604,7 +1787,7 @@ Installed Components:
   ✓ pnpm package manager
   ✓ JetBrains Mono font
   ✓ Auto-update on shell startup (once per day)
-  ✓ Custom functions (gcof)
+  ✓ Custom functions (gswf)
 
 Quick Start:
   1. Close and reopen your terminal (or: exec zsh)
@@ -1650,7 +1833,6 @@ main() {
     check_prerequisites
     setup_package_manager
     install_core_tools
-    install_pnpm || true
     install_starship
     install_yazi
     install_ghostty || true
@@ -1665,6 +1847,7 @@ main() {
 
     setup_shell
     setup_nvm
+    install_pnpm || true
     setup_zinit_plugins
     setup_yazi_plugins
 
