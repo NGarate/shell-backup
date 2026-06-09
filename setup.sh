@@ -1148,6 +1148,15 @@ deploy_yazi_config() {
     backup_file "$HOME/.config/yazi/yazi.toml"
     backup_file "$HOME/.config/yazi/theme.toml"
 
+    # Remove the previously generated keymap override so files keep Yazi's
+    # native direct opener behavior. Directory editor selection is handled via
+    # [open] rules below and existing default keybindings.
+    if [[ -f "$HOME/.config/yazi/keymap.toml" ]] && grep -q 'Open selected/hovered with editor' "$HOME/.config/yazi/keymap.toml"; then
+        backup_file "$HOME/.config/yazi/keymap.toml"
+        rm -f "$HOME/.config/yazi/keymap.toml"
+        success "Removed generated Yazi keymap override"
+    fi
+
     cat > "$HOME/.config/yazi/init.lua" << 'YAZI_INIT_EOF'
 require("git"):setup {
     order = 1500,
@@ -1167,6 +1176,37 @@ url = "*/"
 run = "git"
 group = "git"
 YAZI_TOML_EOF
+
+    local dev_openers=()
+    if command_exists code; then
+        dev_openers+=("    { run = \"code -r %s\", orphan = true, desc = \"VS Code\", for = \"unix\" },")
+    fi
+    if command_exists codium; then
+        dev_openers+=("    { run = \"codium -r %s\", orphan = true, desc = \"VSCodium\", for = \"unix\" },")
+    fi
+    if command_exists cursor; then
+        dev_openers+=("    { run = \"cursor -r %s\", orphan = true, desc = \"Cursor\", for = \"unix\" },")
+    fi
+    if command_exists zed; then
+        dev_openers+=("    { run = \"zed %s\", orphan = true, desc = \"Zed\", for = \"unix\" },")
+    fi
+
+    if [[ ${#dev_openers[@]} -gt 0 ]]; then
+        {
+            printf '\n[opener]\n'
+            printf 'dev_open = [\n'
+            printf '%s\n' "${dev_openers[@]}"
+            printf ']\n\n'
+            cat << 'YAZI_OPEN_RULES_EOF'
+[open]
+prepend_rules = [
+    { url = "*/", use = "dev_open" },
+]
+YAZI_OPEN_RULES_EOF
+        } >> "$HOME/.config/yazi/yazi.toml"
+    else
+        warning "No GUI editor CLI found for Yazi dev opener (checked: code, codium, cursor, zed)"
+    fi
 
     cat > "$HOME/.config/yazi/theme.toml" << 'YAZI_THEME_EOF'
 # Palette synced with starship.toml [palettes.old]
