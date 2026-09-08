@@ -73,13 +73,26 @@ Run `termux-reload-settings` to apply.
 |---|---|---|
 | ESC / TAB | Escape / Tab | Herdr help / sidebar |
 | CTRL | Control | Alt |
-| Arrows | Arrow key | Focus pane in that direction |
+| Panel ← / ↓ / ↑ / → | Focus pane in that direction | Ordinary arrow key |
 | Tab+ | New tab | New workspace |
-| Ant / Sig | Previous / next tab | Page Up / Page Down |
-| Div | Split right | Split down |
+| Tab ← / Tab → | Previous / next Herdr tab | Page Up / Page Down |
+| Dividir | Split right | Split down |
 | Work | Workspaces | Goto picker |
 | Zoom | Zoom pane | Copy mode |
 | Herdr | Prefix | Detach |
+
+After splitting, tap a **Panel** button to switch to the pane in that direction.
+**Tab ← / Tab →** (formerly **Ant / Sig**) switch tabs within the current
+Herdr workspace. They do not send cursor arrows or switch local Termux sessions.
+Ordinary arrows remain available by swiping up on the Panel buttons, including
+for keyboards without their own arrow keys. This layout replaces Termux's
+default extra-key rows.
+
+The text input field reached by swiping the toolbar left belongs to Termux.
+It is not an extra-key action and cannot be removed through `termux.properties`
+in the upstream app: its [toolbar implementation](https://github.com/termux/termux-app/blob/master/app/src/main/java/com/termux/app/terminal/io/TerminalToolbarViewPager.java)
+always includes both pages. Swipe right to return to the buttons; normal typing
+goes directly to the terminal using the Android keyboard.
 
 The macros expect **Ctrl+Space**, configured by `setup.sh`. On an older or
 manually configured host, set this in `~/.config/herdr/config.toml`:
@@ -90,7 +103,8 @@ prefix = "ctrl+space"
 ```
 
 If `[keys]` exists, edit its `prefix` without duplicating the section. Reload
-Herdr's configuration or reattach. In pickers, use ordinary arrows, Enter and Esc.
+Herdr's configuration or reattach. In pickers, use the keyboard's ordinary
+arrows (or swipe up on the Panel buttons), Enter and Esc.
 
 For missing glyphs, put your chosen Nerd Font TTF at `~/.termux/font.ttf` and run
 `termux-reload-settings`. Touch gestures, rendering and real remote reconnects
