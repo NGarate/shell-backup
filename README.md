@@ -1,333 +1,103 @@
 # shell-backup
 
-A unified, cross-platform automation script that replicates a complete professional development environment with zsh, Ghostty, Starship, Yazi, and 10+ essential tools in one command.
+Self-contained development environment installer for Apple Silicon macOS and
+apt-based Linux (amd64/arm64). All desktop configuration is embedded in [setup.sh](./setup.sh).
 
-## Quick Start
+## Install
+
+Requires curl, Git, internet access and permission to install system packages.
+macOS requires version 14+ for cmux.
 
 ```bash
-# One-liner (recommended) - works via curl piping
 curl -fsSL https://raw.githubusercontent.com/ngarate/shell-backup/main/setup.sh | bash
 
-# Or clone and run locally
-git clone https://github.com/ngarate/shell-backup.git
-cd shell-backup
-chmod +x setup.sh
-./setup.sh
+# Or from a local clone:
+bash setup.sh
+bash setup.sh --ci             # No optional prompts; also --non-interactive
+bash setup.sh --with-herdr     # Opt into Herdr on macOS
 ```
 
-> **Note:** The script is fully self-contained - all configuration files are embedded, so it works seamlessly when piped via curl.
+| Platform | Terminal | Persistent sessions |
+|---|---|---|
+| Linux | Ghostty | Herdr |
+| macOS arm64 | cmux | Herdr when selected; never started automatically in cmux |
 
-## Quick Reference
+Both profiles install zsh with Zinit, Starship, Yazi with Git/Starship plugins,
+fzf, zoxide, ripgrep, fd, NVM/Node, pnpm and JetBrains Mono.
 
-- **[SHORTCUTS.md](./SHORTCUTS.md)** - Complete reference for all aliases, keybindings, and shortcuts
-- **[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)** - Common issues and solutions
+Reruns update managed tools below target and preserve compatible newer versions.
+Existing configuration is backed up in `~/.backup`; results and versions are
+logged in `~/.setup.log`. A failed required stage produces a nonzero exit status.
+See [DEPENDENCIES.md](./DEPENDENCIES.md) for versions, checksums and platform limits.
 
-## What Gets Installed
-
-### Shell & Configuration
-
-- **zsh** - Modern shell with Zinit plugin manager (9 plugins)
-- **Starship** - Fast, customizable shell prompt
-- **Custom functions** - Git fuzzy checkout (`gcof`), aliases, and utilities
-
-### Terminal
-
-- **Ghostty** - GPU-accelerated terminal emulator with native tabs and splits
-
-### Developer Tools
-
-- **fzf** - Fuzzy finder for files and commands
-- **zoxide** - Smarter `cd` command with frecency
-- **ripgrep (rg)** - Fast text search
-- **fd** - User-friendly `find` alternative
-- **Yazi** - Terminal file manager with Git status and Starship prompt plugins
-- **NVM** - Node.js version manager
-- **pnpm** - Fast, disk-efficient package manager
-
-### Fonts & Theme
-
-- **JetBrains Mono** - Beautiful monospace font
-- **Starship theme** - Custom prompt with git integration
-
-### Productivity Features
-
-- **Ghostty UI state restore** - macOS can restore windows, tabs, splits, and working directories
-- **Auto-update plugins** - Updates once per day when you open a new shell
-- **Per-terminal command history** - Each terminal session keeps its own zsh history file
-- **Yazi plugin integration** - Git file status signs and Starship-powered header prompt
-- **Git shortcuts** - 40+ aliases + fuzzy branch checkout
-
-## System Requirements
-
-### Minimum
-
-- **Apple Silicon macOS 12+** (M-series, arm64) or **Ubuntu/Debian** on **amd64/arm64**
-- **curl** or **wget**
-- **git**
-- **~500MB** disk space
-
-### Recommended
-
-- **macOS 14+** on Apple Silicon, **Ubuntu 22.04+**, or **Debian 12+** on amd64/arm64
-- **2GB+ RAM**
-
-## Platform Support
-
-| OS | Architecture | Status | Notes |
-|---|---|---|---|
-| macOS | arm64 only | ✅ Supported | Apple Silicon/M-series, Homebrew required |
-| Ubuntu/Debian | amd64/x86_64 | ✅ Supported | apt-based |
-| Ubuntu/Debian | arm64/aarch64 | ✅ Supported | apt-based |
-| macOS Intel | x86_64 | ❌ Unsupported | Not targeted by this script |
-| Other Linux architectures | any | ❌ Unsupported | Not targeted by this script |
-
-## First Time After Installation
+## Herdr
 
 ```bash
-# Reload shell to activate plugins
-exec zsh
-
-# Verify installation
-zsh --version
-starship --version
-yazi --version
-ya pkg list
-
-# Try fuzzy finder
-Ctrl+R  # Search command history
-Ctrl+T  # Browse files
-
-# Try custom gcof (git checkout fuzzy)
-gcof    # Interactively select git branch to checkout
+herdr session attach personal  # Create or resume this computer's named session
+herdr session list
+herdr integration status
 ```
 
-## Common Commands
+Setup configures the prefix as **Ctrl+Space**. Press it, then `q`, to detach and
+leave pane processes running; `?` shows bindings. Reload Herdr's configuration or
+reattach after changing the prefix. `exit` closes the pane's shell.
+
+After verifying Herdr, interactive setup offers missing OpenCode, Hermes, Codex
+and Claude Code integrations. Select numbers, `all`, or Enter/`q` to skip.
+Harnesses and their initialized configurations must already exist. Existing
+integrations are preserved; unknown or outdated states are reported for review.
+CI and runs without a controlling terminal skip this selector.
+
+For mobile access, prepare SSH separately and reconnect to the same host/session.
+[TERMUX.md](./TERMUX.md) covers the Android widget and touch buttons.
+TermRover is the Android/iPad client described by its [guide](https://termrover.sh/guide).
+Each computer keeps its own sessions; cmux workspaces remain local to the Mac.
+
+## Customize
+
+| File | Purpose |
+|---|---|
+| `~/.zshrc.local` | Local aliases and shell preferences; preserved on reruns |
+| `~/.env` | Local environment variables, loaded by generated `~/.zshenv` |
+| `~/.config/ghostty/config.local` | Local rendering overrides for Ghostty/cmux |
+| `~/.config/starship.toml` | Prompt theme |
+| `~/.config/yazi/{init.lua,yazi.toml}` | File manager configuration |
+| `~/.config/herdr/config.toml` | Herdr configuration; setup only changes the prefix |
+
+Edit the heredocs in `setup.sh` for shared defaults. Generated files can be
+replaced by the next setup run, so keep machine-specific shell/terminal changes
+in the `.local` files. Run `exec zsh` to reload the shell.
+
+## Everyday commands
+
+| Command / key | Action |
+|---|---|
+| `gswf [filter]` | Switch to a matching Git branch; use fzf if several match |
+| `gst`, `gco`, `gcb` | Git status, checkout, create branch (OMZ aliases) |
+| `z <directory>` | Jump to a frequently used directory |
+| `y` | Open Yazi and keep its exit directory in the shell |
+| `Ctrl+R` / `Ctrl+T` | Search history / files with fzf |
+| Up / Down after typing | Search history containing that text |
+| `Cmd+Shift+F` (macOS), `Alt+Shift+F` (Linux) | Toggle fullscreen |
+| `Shift+Enter` | Send escaped newline |
+
+Zinit plugins update in the background once per day. To update manually, run
+`zinit self-update` and `zinit update --all`; use `ya pkg upgrade` for Yazi plugins.
+
+## Check or troubleshoot
+
+Start with `~/.setup.log`, fix the reported failure and rerun setup. For shell
+plugins, run `exec zsh`, then `zinit list` interactively. Check Yazi with
+`yazi --version` and `ya pkg list`; check the terminal's font setting if glyphs
+look wrong. For widget connection failures, first run `ssh laptop` in Termux.
+
+Repository checks use temporary homes and mock commands; they do not install software:
 
 ```bash
-# Git shortcuts (Oh-My-Zsh)
-gst          # git status
-gco <branch> # git checkout
-gcb          # git checkout -b
-gca          # git commit --amend
-gp           # git push
-gpu          # git pull
-
-# Navigate faster
-z <folder>   # Jump to frequently used folder
-cd -         # Go to previous directory
-
-# Search files
-rg "pattern" # ripgrep search
-fd "*.ts"    # Find TypeScript files
-
-# Browse files
-yazi         # Open terminal file manager
+bash -n setup.sh
+bash -n termux-shortcuts/Herdr
+python3 -m unittest discover -s tests -v
 ```
 
-**📚 See [SHORTCUTS.md](./SHORTCUTS.md) for complete reference of all aliases, keybindings, and shortcuts.**
-
-## Configuration Files
-
-```
-~/.zshenv                   # Early env loading for all zsh shells
-~/.zshrc                    # Interactive Zsh configuration
-~/.config/starship.toml     # Starship prompt theme
-~/.config/yazi/init.lua     # Yazi plugin setup
-~/.config/yazi/yazi.toml    # Yazi fetcher configuration
-~/.config/yazi/package.toml # Yazi plugin lockfile
-~/.zsh/gcof.zsh             # Custom functions
-~/.config/ghostty/config    # Ghostty terminal config
-~/.cache/zsh/history-*      # Per-terminal zsh history files
-```
-
-### Machine-local environment variables
-
-Put machine-local secrets and environment variables in:
-
-```bash
-~/.env
-```
-
-`shell-backup` generates `~/.zshenv` to load **only** `~/.env`, so those variables are available to:
-- normal interactive zsh sessions
-- non-interactive zsh invocations
-- automation/helpers that spawn zsh to read the environment
-
-This keeps `~/.zshrc` focused on interactive shell behavior and avoids spreading secret-loading logic across multiple files.
-
-### Customize After Installation
-
-**Edit shell config:**
-
-```bash
-vim ~/.zshrc
-source ~/.zshrc  # Reload
-```
-
-**Edit prompt theme:**
-
-```bash
-vim ~/.config/starship.toml
-exec zsh  # Reload
-```
-
-**Edit Ghostty config:**
-
-```bash
-vim ~/.config/ghostty/config
-# Restart Ghostty for settings that cannot reload at runtime
-```
-
-**Edit Yazi config:**
-
-```bash
-vim ~/.config/yazi/init.lua
-vim ~/.config/yazi/yazi.toml
-ya pkg list
-```
-
-**Important:** Config reload only affects the current session. For a fresh start:
-
-```bash
-# Reload shell configuration
-exec zsh
-```
-
-**Add your own aliases:**
-
-```bash
-# Add to ~/.zshrc before the last line
-alias myalias="my command"
-```
-
-## Auto-Update
-
-Zsh plugins are automatically updated **once per day** when you open a new shell:
-
-- Checks for updates on shell startup
-- Runs in background (doesn't block your prompt)
-- Updates Zinit itself, all plugins, and OMZ snippets
-- Uses timestamp file to track last update (`~/.zinit-last-update`)
-
-### Manual Update
-
-```bash
-# Update all zsh plugins
-zinit update --all
-
-# Update Zinit itself
-zinit self-update
-
-# Update Starship
-starship self update
-
-# Update Yazi plugins
-ya pkg upgrade
-```
-
-## Troubleshooting
-
-See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for:
-
-- Plugins not loading
-- Font display issues
-- Yazi plugin issues
-- SSH key errors
-- Permission denied errors
-- Platform-specific issues
-
-### Quick Fixes
-
-```bash
-# Plugins not loading after install?
-exec zsh
-
-# Font looks wrong?
-# Restart terminal, then check: Settings > Font > JetBrains Mono
-
-# Check installation status
-./setup.sh  # Run again - it's idempotent!
-```
-
-## How It Works
-
-The setup script:
-
-1. Detects your OS and architecture
-2. Installs/updates package managers (Homebrew, apt)
-3. Installs zsh, Ghostty, Starship, Yazi, pnpm, and core dev tools
-4. Downloads and installs JetBrains Mono font
-5. Deploys embedded configuration files (.zshenv, .zshrc, Ghostty config, Yazi config, starship.toml)
-6. Initializes Zinit and installs plugins
-7. Installs Yazi plugins with `ya pkg`
-8. Configures auto-update on shell startup (once per day)
-9. Verifies all installations
-10. Prints summary with next steps
-
-**Key features:**
-
-- ✅ **Self-contained** - All configs embedded, single file deployment
-- ✅ **Curl-friendly** - Works seamlessly when piped via curl
-- ✅ **Idempotent** - Safe to run multiple times
-- ✅ **Error recovery** - Shows what failed, lets you fix and re-run
-- ✅ **Backup strategy** - Backs up existing configs before overwriting
-- ✅ **Platform aware** - Different paths for macOS vs Linux
-
-## Installation Time
-
-- **First time:** 10-15 minutes (includes downloads and Homebrew setup on macOS)
-- **Subsequent runs:** 2-3 minutes (checks for updates)
-- **On faster internet:** 5-8 minutes
-
-## License
-
-MIT
-
-## Contributing
-
-Found a bug? Want to add a feature?
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Make changes and test on your OS
-4. Commit with clear messages: `git commit -m "Add: description"`
-5. Push and open a pull request
-
-### Testing Checklist
-
-Before submitting a PR, verify on your OS:
-
-- [ ] Script runs without errors
-- [ ] All plugins load (check with `zinit list`)
-- [ ] Yazi plugins load (check with `ya pkg list`)
-- [ ] Yazi starts and shows Git status signs in a Git repository
-- [ ] Starship prompt displays correctly
-- [ ] Fonts render correctly
-- [ ] Auto-update works (check logs after 24 hours)
-
-## Support
-
-- 📖 See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for common issues
-- 💬 Open an issue on GitHub
-- 📝 Check logs: `~/.setup.log`
-
-## Roadmap
-
-- [ ] Interactive installer with prompts
-- [ ] Desktop environment detection (GNOME, KDE, etc.)
-- [ ] Optional tools menu (Neovim, Lazygit, etc.)
-- [ ] Backup and restore configs to cloud
-- [ ] Automated testing on multiple platforms
-
-## Learn More
-
-- [Zinit documentation](https://github.com/zdharma-continuum/zinit)
-- [Ghostty documentation](https://ghostty.org/docs)
-- [Yazi documentation](https://yazi-rs.github.io/docs/)
-- [Yazi plugin manager](https://yazi-rs.github.io/docs/cli/#pm)
-- [Starship configuration](https://starship.rs/config/)
-- [fzf examples](https://github.com/junegunn/fzf)
-
----
-
-**Happy coding!**
+Full installation, upgrades and visual checks on target machines remain manual;
+see the [validation limits](./DEPENDENCIES.md#validation-performed-and-pending).

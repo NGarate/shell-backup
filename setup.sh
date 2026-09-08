@@ -3,7 +3,7 @@
 ################################################################################
 # SHELL-BACKUP: Development Environment Setup
 # Supports: macOS Apple Silicon (arm64), Ubuntu/Debian Linux (amd64/arm64)
-# Version: 2.1.0
+# Version: 3.0.0
 ################################################################################
 
 set -euo pipefail
@@ -24,16 +24,27 @@ readonly BLUE='\033[0;34m'
 readonly NC='\033[0m' # No Color
 
 # Version requirements
-readonly MIN_ZSH_VERSION="5.8"
-readonly MIN_YAZI_VERSION="26.5.6"
+readonly MIN_ZSH_VERSION="5.9"
+readonly MIN_YAZI_VERSION="26.9.1"
 
 # Tool versions
-readonly NVM_INSTALL_VERSION="0.40.1"
+readonly NVM_INSTALL_VERSION="0.40.7"
 readonly JB_MONO_VERSION="2.304"
-readonly YAZI_VERSION="26.5.6"
+readonly YAZI_VERSION="26.9.1"
 
 # Non-interactive flag (will be parsed after functions are defined)
 NON_INTERACTIVE=false
+WITH_HERDR=false
+HERDR_BIN=""
+HERDR_READY=false
+SETUP_FAILED=false
+RESULTS=()
+readonly HERDR_VERSION="0.8.2"
+readonly STARSHIP_VERSION="1.26.0"
+readonly PNPM_VERSION="12.3.4"
+readonly NODE_VERSION="24.20.0"
+readonly GHOSTTY_VERSION="1.3.1"
+readonly CMUX_VERSION="0.64.22"
 
 ################################################################################
 # 2. UTILITY FUNCTIONS
@@ -61,15 +72,20 @@ warning() {
     echo -e "${YELLOW}[$(_ts)]⚠${NC} $1" | tee -a "$SETUP_LOG"
 }
 
-# Parse command line arguments (after functions are defined)
-for arg in "$@"; do
-    case "$arg" in
-        --ci|--non-interactive)
-            NON_INTERACTIVE=true
-            log "Running in non-interactive mode"
-            ;;
-    esac
-done
+parse_args() {
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --ci|--non-interactive) NON_INTERACTIVE=true ;;
+            --with-herdr) WITH_HERDR=true ;;
+            --help|-h)
+                printf '%s\n' 'Usage: setup.sh [--ci|--non-interactive] [--with-herdr]' \
+                    'Linux: Ghostty + Herdr. macOS: cmux; --with-herdr opts into Herdr.'
+                exit 0 ;;
+            *) error "Unknown option: $arg" ;;
+        esac
+    done
+}
 
 command_exists() {
     command -v "$1" &>/dev/null
@@ -116,6 +132,521 @@ brew_install_or_upgrade() {
     fi
 }
 
+# Numeric release versions only; unknown output never counts as a working tool.
+tool_version() {
+    local output
+    output=$("$1" --version 2>/dev/null) || return 0
+    printf '%s\n' "$output" | sed -nE 's/^[^0-9]*([0-9]+\.[0-9]+(\.[0-9]+)?).*/\1/p' | head -1
+}
+
+require_version() {
+    local version
+    version=$(tool_version "$1")
+    if [[ -n "$version" ]] && version_gte "$version" "$2"; then
+        success "$1 verified ($version, target $2)"
+        return 0
+    fi
+    warning "$1 ${version:-absent/unusable} does not meet $2; component blocked"
+    return 1
+}
+
+record_result() {
+    RESULTS+=("$1: $2${3:+ — $3}")
+    log "${RESULTS[${#RESULTS[@]}-1]}"
+    [[ "$2" != failed && "$2" != blocked ]] || SETUP_FAILED=true
+    return 0
+}
+
+# Run fallible stages in a child shell with errexit active. Calling a function
+# directly in an `if` would disable errexit throughout that function.
+run_stage() {
+    local label="$1" pid status=0
+    shift
+    ( set -e; "$@" ) &
+    pid=$!
+    wait "$pid" || status=$?
+    if [[ "$status" == 0 ]]; then
+        record_result "$label" verified
+    elif [[ "$status" == 3 ]]; then
+        record_result "$label" skipped "see $SETUP_LOG"
+    else
+        record_result "$label" failed "exit $status; see $SETUP_LOG"
+    fi
+}
+
+can_prompt() {
+    [[ "$NON_INTERACTIVE" != true ]] && ( : </dev/tty >/dev/tty ) 2>/dev/null
+}
+
+read_tty() (
+    trap 'exit 130' INT
+    local answer
+    exec 9<>/dev/tty || exit 1
+    printf '%s' "$1" >&9
+    IFS= read -r answer <&9 || exit 1
+    printf '%s\n' "$answer"
+)
+
+# Keep Ctrl+C scoped to the prompt, including the parent shell waiting for
+# command substitution. Restore any caller-provided handler afterwards.
+prompt_tty() {
+    local previous_int
+    previous_int=$(trap -p INT)
+    trap ':' INT
+    TTY_ANSWER=$(read_tty "$1") || TTY_ANSWER=""
+    if [[ -n "$previous_int" ]]; then
+        eval "$previous_int"
+    else
+        trap - INT
+    fi
+}
+
+sha256_file() {
+    if command_exists sha256sum; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
+verified_download() {
+    local url="$1" checksum="$2" destination="$3" actual
+    [[ "$checksum" =~ ^[a-f0-9]{64}$ ]] || return 1
+    retry curl -fL --silent --show-error --connect-timeout 15 --max-time 180 "$url" -o "$destination" || return 1
+    actual=$(sha256_file "$destination") || return 1
+    if [[ "$actual" != "$checksum" ]]; then
+        warning "SHA-256 mismatch: $url"
+        return 1
+    fi
+}
+
+# All records below come from the official release asset digests, audited
+# 2026-09-07. musl archives avoid distro glibc requirements for Rust CLIs.
+release_asset() {
+    local name="$1" platform="$2" arch="$3"
+    case "$name:$platform:$arch" in
+        herdr:linux:amd64) printf '%s\n' 'https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-x86_64|976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4' ;;
+        herdr:linux:arm64) printf '%s\n' 'https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-aarch64|f55610658e1c2e0d2aaef730b4b2ab885f7f8ba00285ab372bfb14f2e3d5b40d' ;;
+        herdr:darwin:arm64) printf '%s\n' 'https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-macos-aarch64|a5d4f4d504d8b309c91f811050559300faba31258425f53c50852fc96f6ae574' ;;
+        yazi:linux:amd64) printf '%s\n' 'https://github.com/sxyazi/yazi/releases/download/v26.9.1/yazi-x86_64-unknown-linux-musl.zip|9b9c39decccf8cb0ff53a7d637d38f8a79d93bbd0099f4ea9c619ef6bb392f5d' ;;
+        yazi:linux:arm64) printf '%s\n' 'https://github.com/sxyazi/yazi/releases/download/v26.9.1/yazi-aarch64-unknown-linux-musl.zip|dd569daecaae914185f295634109295ccd25c1b42b02eb89a74f651970024f2e' ;;
+        starship:linux:amd64) printf '%s\n' 'https://github.com/starship/starship/releases/download/v1.26.0/starship-x86_64-unknown-linux-musl.tar.gz|b7c232b0e8249d8e55a40beb79c5c43a7d370f3f9408bd215deb0170daeaadf3' ;;
+        starship:linux:arm64) printf '%s\n' 'https://github.com/starship/starship/releases/download/v1.26.0/starship-aarch64-unknown-linux-musl.tar.gz|dc30189378d2f2e287384e8a692d3f95ad1df64cf0e8c36aa9201516028aed6b' ;;
+        fzf:linux:amd64) printf '%s\n' 'https://github.com/junegunn/fzf/releases/download/v0.74.3/fzf-0.74.3-linux_amd64.tar.gz|3501a595e4b5c40a6b047340a0e8f805c46fd4e61ef95ef8a136ba8c61cf6f22' ;;
+        fzf:linux:arm64) printf '%s\n' 'https://github.com/junegunn/fzf/releases/download/v0.74.3/fzf-0.74.3-linux_arm64.tar.gz|4a17a17b46bd0c4873e995533de508995c11572c0be0664a5dbcf13f60463046' ;;
+        fd:linux:amd64) printf '%s\n' 'https://github.com/sharkdp/fd/releases/download/v10.5.0/fd-v10.5.0-x86_64-unknown-linux-musl.tar.gz|761c72dc8e120d85b22292063be8a796e2eeb20eb3e4f38b8fa2343ccf3514a7' ;;
+        fd:linux:arm64) printf '%s\n' 'https://github.com/sharkdp/fd/releases/download/v10.5.0/fd-v10.5.0-aarch64-unknown-linux-musl.tar.gz|d76c4317f7d5dba69f8a2a15856c90c777e7f0dd4e85f0de8c76de6992c374d4' ;;
+        zoxide:linux:amd64) printf '%s\n' 'https://github.com/ajeetdsouza/zoxide/releases/download/v0.10.0/zoxide-0.10.0-x86_64-unknown-linux-musl.tar.gz|2d93385b99f3e82cf2701609a1bffcad863fbeb75aa3fe7eb6be4d29be68b1ae' ;;
+        zoxide:linux:arm64) printf '%s\n' 'https://github.com/ajeetdsouza/zoxide/releases/download/v0.10.0/zoxide-0.10.0-aarch64-unknown-linux-musl.tar.gz|f1f16c5d6298d63dee467eedea1cdcd8490e43e493bea43acd416dc9033ef641' ;;
+        rg:linux:amd64) printf '%s\n' 'https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz|33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c' ;;
+        rg:linux:arm64) printf '%s\n' 'https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz|800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915' ;;
+        pnpm:linux:amd64) printf '%s\n' 'https://github.com/pnpm/pnpm/releases/download/v12.3.4/pnpm-linux-x64-musl.tar.gz|e4c4f54599627cc0646fbb2ea8103bd6c88634533fbd6c6f5ca0f6fe7d6f5d9c' ;;
+        pnpm:linux:arm64) printf '%s\n' 'https://github.com/pnpm/pnpm/releases/download/v12.3.4/pnpm-linux-arm64-musl.tar.gz|75c0b268cedbf9b57b69dcef576b9b307dd5b7650c1f967ac1b8f8d6afc1ca25' ;;
+        *) return 1 ;;
+    esac
+}
+
+install_release_tool() {
+    local name="$1" target_version="$2" before after asset url checksum
+    before=$(tool_version "$name")
+    if [[ -n "$before" ]] && version_gte "$before" "$target_version"; then
+        if [[ "$name" != yazi ]] || { [[ "$(tool_version ya)" == "$before" ]]; }; then
+            success "$name retained ($before)"
+            return 0
+        fi
+        # Avoid downgrading yazi just to repair a mismatched companion CLI.
+        if [[ "$before" != "$target_version" ]]; then
+            warning 'Newer Yazi has mismatched ya; repair that installation first'
+            return 1
+        fi
+    fi
+    asset=$(release_asset "$name" "$OS_TYPE" "$ARCH") || return 1
+    IFS='|' read -r url checksum <<< "$asset"
+    (
+        local temp_dir binary source_binary
+        temp_dir=$(mktemp -d) || exit 1
+        trap 'rm -rf "$temp_dir"' EXIT
+        verified_download "$url" "$checksum" "$temp_dir/asset" || exit 1
+        case "$url" in
+            *.tar.gz) tar -xzf "$temp_dir/asset" -C "$temp_dir" || exit 1 ;;
+            *.zip) unzip -q "$temp_dir/asset" -d "$temp_dir" || exit 1 ;;
+            *) mv "$temp_dir/asset" "$temp_dir/$name" || exit 1 ;;
+        esac
+        for binary in "$name"; do
+            source_binary=$(find "$temp_dir" -type f -name "$binary" -print -quit)
+            [[ -n "$source_binary" ]] || exit 1
+            chmod 755 "$source_binary" || exit 1
+            require_version "$source_binary" "$target_version" || exit 1
+        done
+        # Verify both Yazi executables before replacing either one.
+        if [[ "$name" == yazi ]]; then
+            source_binary=$(find "$temp_dir" -type f -name ya -print -quit)
+            [[ -n "$source_binary" ]] || exit 1
+            chmod 755 "$source_binary" || exit 1
+            require_version "$source_binary" "$target_version" || exit 1
+        fi
+        mkdir -p "$HOME/.local/bin" || exit 1
+        local binaries=("$name")
+        [[ "$name" != yazi ]] || binaries+=(ya)
+        for binary in "${binaries[@]}"; do
+            source_binary=$(find "$temp_dir" -type f -name "$binary" -print -quit)
+            # Rename avoids truncating binaries used by live sessions.
+            install -m 755 "$source_binary" "$HOME/.local/bin/.$binary.setup" || exit 1
+            mv -f "$HOME/.local/bin/.$binary.setup" "$HOME/.local/bin/$binary" || exit 1
+        done
+    ) || return 1
+    hash -r
+    after=$(tool_version "$name")
+    log "$name ${before:-absent} -> ${after:-unusable} (target $target_version)"
+    require_version "$name" "$target_version"
+}
+
+find_herdr() {
+    local candidate
+    candidate=$(command -v herdr 2>/dev/null || true)
+    if [[ -n "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+    for candidate in "${HERDR_INSTALL_DIR:-$HOME/.local/bin}/herdr" \
+        "$HOME/.local/bin/herdr" /opt/homebrew/bin/herdr /usr/local/bin/herdr \
+        "$HOME/.cargo/bin/herdr" "$HOME/.local/share/mise/shims/herdr" \
+        "$HOME/.nix-profile/bin/herdr" /run/current-system/sw/bin/herdr; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+    return 1
+}
+
+setup_herdr() {
+    HERDR_READY=false
+    HERDR_BIN=$(find_herdr || true)
+    local answer before
+    if [[ -z "$HERDR_BIN" && "$OS_TYPE" == darwin && "$WITH_HERDR" != true ]]; then
+        if can_prompt; then
+            prompt_tty 'Install optional Herdr for mobile sessions? [y/N] '
+            answer="$TTY_ANSWER"
+            case "$answer" in y|Y|yes|si|sí) WITH_HERDR=true ;; esac
+        fi
+        if [[ "$WITH_HERDR" != true ]]; then
+            record_result Herdr skipped 'optional macOS component; not selected'
+            return 0
+        fi
+    fi
+    before=""
+    [[ -z "$HERDR_BIN" ]] || before=$(tool_version "$HERDR_BIN")
+    if [[ -z "$HERDR_BIN" ]]; then
+        if ! install_release_tool herdr "$HERDR_VERSION"; then
+            record_result Herdr failed 'installation failed; no integration selector'
+            return 0
+        fi
+        HERDR_BIN="$HOME/.local/bin/herdr"
+    elif [[ -n "$before" ]] && ! version_gte "$before" "$HERDR_VERSION"; then
+        if [[ "$HERDR_BIN" == "$HOME/.local/bin/herdr" && ! -L "$HERDR_BIN" ]]; then
+            if ! install_release_tool herdr "$HERDR_VERSION"; then
+                record_result Herdr failed 'update failed; no integration selector'
+                return 0
+            fi
+        elif [[ "$OS_TYPE" == darwin && "$HERDR_BIN" == /opt/homebrew/bin/herdr ]] && brew list herdr >/dev/null 2>&1; then
+            if ! brew_install_or_upgrade herdr herdr; then
+                record_result Herdr failed 'Homebrew update failed'
+                return 0
+            fi
+        else
+            record_result Herdr blocked "version $before; update through its owning package manager to $HERDR_VERSION+"
+            return 0
+        fi
+    fi
+    if ! require_version "$HERDR_BIN" "$HERDR_VERSION" || ! "$HERDR_BIN" --help >/dev/null 2>&1; then
+        record_result Herdr failed 'verification failed; no integration selector'
+        return 0
+    fi
+    export PATH="$(dirname "$HERDR_BIN"):$PATH"
+    HERDR_READY=true
+    record_result Herdr verified "${before:-absent} -> $(tool_version "$HERDR_BIN"); running sessions left intact"
+    run_stage 'Herdr prefix' configure_herdr_prefix
+    setup_herdr_integrations
+}
+
+configure_herdr_prefix() {
+    # Keep this editor embedded so curl | bash remains self-contained.
+    # No server commands: existing clients can reload config or reattach later.
+    python3 - "${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}" "$BACKUP_DIR" <<'HERDR_CONFIG_EOF'
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import sys
+import tempfile
+
+path = Path(sys.argv[1]).expanduser().resolve()
+backup_dir = Path(sys.argv[2])
+original = path.read_bytes() if path.exists() else b''
+text = original.decode('utf-8')
+
+# Restrict edits to ordinary TOML tables/scalar strings. Refuse ambiguous
+# layouts instead of interpreting a table-looking line inside a string.
+if '\"\"\"' in text or "'''" in text:
+    sys.exit('Herdr prefix: multiline TOML strings require a manual prefix edit; file preserved.')
+if re.search(r'''(?m)^\s*(?:keys|"keys"|'keys')\s*[.=]''', text):
+    sys.exit('Herdr prefix: inline/dotted keys table requires a manual prefix edit; file preserved.')
+
+newline = '\r\n' if '\r\n' in text else '\n'
+lines = text.splitlines(keepends=True)
+header = re.compile(r'''^\s*\[\s*(?:keys|"keys"|'keys')\s*\]\s*(?:#.*)?$''')
+sections = [i for i, line in enumerate(lines) if header.fullmatch(line.rstrip('\r\n'))]
+if len(sections) > 1:
+    sys.exit('Herdr prefix: duplicate keys tables; file preserved.')
+if sections:
+    start = sections[0] + 1
+    end = next((i for i in range(start, len(lines)) if lines[i].lstrip().startswith('[')), len(lines))
+    assignment = re.compile(r'''^(\s*(?:prefix|"prefix"|'prefix')\s*=\s*)("(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*')([ \t]*(?:#[^\r\n]*)?)(\r?\n)?$''')
+    candidates = [i for i in range(start, end)
+                  if re.match(r'''^\s*(?:prefix|"prefix"|'prefix')\s*=''', lines[i])]
+    if len(candidates) > 1:
+        sys.exit('Herdr prefix: duplicate prefix entries; file preserved.')
+    if candidates:
+        i = candidates[0]
+        match = assignment.fullmatch(lines[i])
+        if not match:
+            sys.exit('Herdr prefix: unsupported prefix value; file preserved.')
+        if match[2] not in ('"ctrl+space"', "'ctrl+space'"):
+            lines[i] = match[1] + '"ctrl+space"' + match[3] + (match[4] or '')
+    else:
+        if not lines[start - 1].endswith('\n'):
+            lines[start - 1] += newline
+        lines.insert(start, 'prefix = "ctrl+space"' + newline)
+else:
+    if text and not text.endswith('\n'):
+        lines.append(newline)
+    lines.extend([newline if text else '', '[keys]' + newline, 'prefix = "ctrl+space"' + newline])
+
+updated = ''.join(lines).encode('utf-8')
+if updated == original:
+    print('Herdr prefix already set to ctrl+space; config preserved.')
+    sys.exit(0)
+
+# When provided by Python (3.11+), validate the entire document too.
+try:
+    import tomllib
+except ImportError:
+    pass
+else:
+    tomllib.loads(updated.decode('utf-8'))
+
+path.parent.mkdir(parents=True, exist_ok=True)
+if path.exists():
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    fd, backup = tempfile.mkstemp(prefix='herdr-config.toml.backup.', dir=str(backup_dir))
+    os.close(fd)
+    shutil.copy2(str(path), backup)
+    print('Herdr config backup: ' + backup)
+fd, temporary = tempfile.mkstemp(prefix='.herdr-config-', dir=str(path.parent))
+try:
+    with os.fdopen(fd, 'wb') as output:
+        output.write(updated)
+    if path.exists():
+        os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
+    os.replace(temporary, str(path))
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+print('Herdr prefix saved as ctrl+space: ' + str(path))
+HERDR_CONFIG_EOF
+    log 'Herdr prefix: Ctrl+Space. Reload config in Herdr or reattach the client to apply.'
+}
+
+# Herdr 0.8.2 provides all four installers, but none of these four optional
+# session/lifecycle integrations is active merely by installing Herdr itself.
+# Official protocol: src/cli/integration.rs at v0.8.2 (no server required).
+integration_state() {
+    local target="$1" snapshot="$2" line count
+    count=$(printf '%s\n' "$snapshot" | awk -v p="$target: " 'index($0,p)==1 {n++} END {print n+0}')
+    [[ "$count" == 1 ]] || { printf '%s\n' unknown; return; }
+    line=$(printf '%s\n' "$snapshot" | sed -n "s/^$target: //p")
+    case "$line" in
+        'not installed ('*) printf '%s\n' missing ;;
+        'current ('*) printf '%s\n' installed ;;
+        'outdated ('*|'needs repair ('*) printf '%s\n' incompatible ;;
+        *) printf '%s\n' unknown ;;
+    esac
+}
+
+integration_home() {
+    local directory
+    case "$1" in
+        opencode) directory="$HOME/.config/opencode" ;;
+        hermes) directory="${HERMES_HOME:-$HOME/.hermes}" ;;
+        codex) directory="${CODEX_HOME:-$HOME/.codex}" ;;
+        claude) directory="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" ;;
+    esac
+    case "$directory" in '~/'*) directory="$HOME/${directory:2}" ;; esac
+    printf '%s\n' "$directory"
+}
+
+install_herdr_integration() {
+    local target="$1" directory snapshot state
+    # Re-check immediately before mutation, including selections made minutes ago.
+    if ! snapshot=$("$HERDR_BIN" integration status 2>/dev/null); then
+        record_result "Herdr/$target" skipped 'state indeterminate'
+        return 0
+    fi
+    state=$(integration_state "$target" "$snapshot")
+    if [[ "$state" != missing ]]; then
+        record_result "Herdr/$target" skipped "state changed to $state; preserved"
+        return 0
+    fi
+    directory=$(integration_home "$target")
+    if ! command_exists "$target" || [[ ! -d "$directory" ]]; then
+        record_result "Herdr/$target" skipped 'harness or its initialized configuration is absent'
+        return 0
+    fi
+    # Back up only files potentially edited by the official installer. Never
+    # back up whole harness homes (credentials, sessions and projects live there).
+    case "$target" in
+        opencode) backup_file "$directory/tui.json"; backup_file "$directory/tui.jsonc" ;;
+        hermes) backup_file "$directory/config.yaml" ;;
+        codex) backup_file "$directory/config.toml"; backup_file "$directory/hooks.json" ;;
+        claude) backup_file "$directory/settings.json" ;;
+    esac
+    if ! "$HERDR_BIN" integration install "$target" </dev/null; then
+        record_result "Herdr/$target" failed 'official installer failed; retry requires a new selection'
+        return 0
+    fi
+    if snapshot=$("$HERDR_BIN" integration status 2>/dev/null) && \
+       [[ "$(integration_state "$target" "$snapshot")" == installed ]]; then
+        record_result "Herdr/$target" installed 'verified by Herdr; restart the harness to load it'
+    else
+        record_result "Herdr/$target" failed 'post-install verification failed'
+    fi
+}
+
+setup_herdr_integrations() {
+    [[ "$HERDR_READY" == true ]] || return 0
+    local snapshot target state choice token index found
+    local pending=() selected=() tokens=()
+    if ! snapshot=$("$HERDR_BIN" integration status 2>/dev/null); then
+        record_result 'Herdr integrations' skipped 'state indeterminate; status command unavailable or failed'
+        return 0
+    fi
+    for target in opencode hermes codex claude; do
+        state=$(integration_state "$target" "$snapshot")
+        case "$state" in
+            missing) pending+=("$target") ;;
+            installed) record_result "Herdr/$target" installed 'preserved' ;;
+            incompatible) record_result "Herdr/$target" blocked 'existing integration outdated or needs repair; preserved' ;;
+            *) record_result "Herdr/$target" skipped 'state indeterminate; preserved' ;;
+        esac
+    done
+    [[ ${#pending[@]} -gt 0 ]] || return 0
+    if ! can_prompt; then
+        for target in "${pending[@]}"; do
+            record_result "Herdr/$target" skipped 'non-interactive or no controlling terminal'
+        done
+        return 0
+    fi
+    local menu=$'Optional Herdr integrations (none selected):\n'
+    for ((index=0; index<${#pending[@]}; index++)); do
+        menu+="$((index+1))) ${pending[index]}"$'\n'
+    done
+    menu+=$'Enter numbers separated by spaces, all, or Enter/q to skip: '
+    prompt_tty "$menu"
+    choice="$TTY_ANSWER"
+    case "$choice" in
+        ''|q|Q|cancel) ;;
+        all) selected=("${pending[@]}") ;;
+        *)
+            read -r -a tokens <<< "$choice"
+            if [[ ${#tokens[@]} -gt 0 ]]; then
+                for token in "${tokens[@]}"; do
+                    if [[ ! "$token" =~ ^[1-4]$ ]] || ((token > ${#pending[@]})); then
+                        selected=()
+                        warning 'Invalid selection; no integrations selected'
+                        break
+                    fi
+                    target="${pending[token-1]}"
+                    found=false
+                    if [[ ${#selected[@]} -gt 0 ]]; then
+                        for state in "${selected[@]}"; do
+                            [[ "$state" != "$target" ]] || found=true
+                        done
+                    fi
+                    [[ "$found" == true ]] || selected+=("$target")
+                done
+            fi ;;
+    esac
+    for target in "${pending[@]}"; do
+        found=false
+        if [[ ${#selected[@]} -gt 0 ]]; then
+            for state in "${selected[@]}"; do
+                [[ "$state" != "$target" ]] || found=true
+            done
+        fi
+        if [[ "$found" == true ]]; then
+            install_herdr_integration "$target"
+        else
+            record_result "Herdr/$target" skipped 'not selected'
+        fi
+    done
+}
+
+font_version() {
+    [[ -r "$1" ]] || return 0
+    python3 - "$1" <<'FONT_VERSION_EOF'
+import struct, sys
+try:
+    with open(sys.argv[1], 'rb') as stream:
+        data = stream.read()
+    count = struct.unpack_from('>H', data, 4)[0]
+    for index in range(count):
+        tag, _, offset, _ = struct.unpack_from('>4sIII', data, 12 + 16 * index)
+        if tag == b'head':
+            print('%.3f' % (struct.unpack_from('>I', data, offset + 4)[0] / 65536))
+            break
+except (OSError, struct.error):
+    pass
+FONT_VERSION_EOF
+}
+
+require_font_version() {
+    local version
+    version=$(font_version "$1")
+    [[ -n "$version" ]] && version_gte "$version" "$JB_MONO_VERSION"
+}
+
+version_inventory() {
+    local name version
+    for name in git zsh fzf zoxide rg fd starship yazi ya pnpm node python3 ghostty; do
+        version=$(tool_version "$name")
+        printf '  %s: %s\n' "$name" "${version:-absent/unknown}"
+    done
+    if [[ -n "${HERDR_BIN:-}" ]]; then
+        printf '  Herdr: %s (%s)\n' "$(tool_version "$HERDR_BIN")" "$HERDR_BIN"
+    fi
+    local asset path revision
+    while IFS='|' read -r asset path; do
+        revision=$(git -C "$path" rev-parse --short HEAD 2>/dev/null || true)
+        printf '  %s: %s\n' "$asset" "${revision:-snippet/unavailable}"
+    done < <(zinit_expected_assets)
+    if [[ -f "$HOME/.local/share/zinit/zinit.git/VERSION" ]]; then
+        printf '  Zinit: %s\n' "$(cat "$HOME/.local/share/zinit/zinit.git/VERSION")"
+    fi
+    if command_exists ya; then
+        ya pkg list 2>/dev/null || true
+    fi
+    local package
+    if [[ "$PKG_MANAGER" == apt ]]; then
+        for package in zsh git curl ca-certificates file unzip tar build-essential fontconfig python3 \
+            wl-clipboard xclip command-not-found snapd; do
+            dpkg-query -W -f='  ${Package}: ${Version}\n' "$package" 2>/dev/null || true
+        done
+    elif command_exists brew; then
+        brew list --versions git zsh fzf zoxide ripgrep fd starship yazi pnpm python 2>/dev/null || true
+    fi
+}
+
 get_zsh_path() {
     local zsh_path
     zsh_path=$(command -v zsh 2>/dev/null || true)
@@ -135,7 +666,7 @@ run_with_sudo() {
         "$@"
     elif sudo -n true 2>/dev/null; then
         sudo "$@"
-    elif [[ -t 0 ]] && [[ "$NON_INTERACTIVE" != true ]]; then
+    elif can_prompt; then
         sudo "$@"
     else
         warning "Skipping ${description}; sudo requires a password and no interactive TTY is available."
@@ -186,11 +717,7 @@ version_gte() {
     local v1="$1"
     local v2="$2"
 
-    # GNU sort supports -V, BSD sort (macOS default) does not.
-    if sort -V </dev/null >/dev/null 2>&1; then
-        printf '%s\n%s\n' "$v2" "$v1" | sort -V -C
-        return
-    fi
+    [[ "$v1" =~ ^[0-9]+(\.[0-9]+)*$ && "$v2" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 1
 
     local IFS='.'
     local i
@@ -262,10 +789,10 @@ EOF
 check_prerequisites() {
     log "Checking prerequisites..."
 
-    if ! command_exists curl && ! command_exists wget; then
-        error "Neither curl nor wget found. Please install one of them."
+    if ! command_exists curl; then
+        error "curl is required for verified release downloads."
     fi
-    success "curl/wget available"
+    success "curl available"
 
     if ! command_exists git; then
         if [[ "$PKG_MANAGER" == "apt" || "$PKG_MANAGER" == "brew" ]]; then
@@ -325,7 +852,7 @@ install_core_tools() {
     if [[ "$OS_TYPE" == "darwin" ]]; then
         # macOS via Homebrew
         # Format: "package_name:command_name" - if no colon, command_name = package_name
-        local tools=("git" "zsh" "fzf" "zoxide" "ripgrep:rg" "fd:fd")
+        local tools=("git" "zsh" "fzf" "zoxide" "ripgrep:rg" "fd:fd" "python:python3")
         local package_name command_name
         for tool_mapping in "${tools[@]}"; do
             if [[ "$tool_mapping" == *":"* ]]; then
@@ -340,7 +867,7 @@ install_core_tools() {
         done
     else
         # Ubuntu/Debian via apt
-        local base_packages=(zsh git curl file unzip build-essential fontconfig)
+        local base_packages=(zsh git curl ca-certificates file unzip tar build-essential fontconfig python3)
         local extra_packages=(fzf zoxide ripgrep fd-find wl-clipboard xclip command-not-found)
         local available_extra_packages=()
         local base_tools_missing=false
@@ -400,177 +927,109 @@ install_core_tools() {
         fi
     fi
 
+    if [[ "$OS_TYPE" == linux ]]; then
+        install_release_tool fzf 0.74.3 || return 1
+        install_release_tool zoxide 0.10.0 || return 1
+        install_release_tool rg 15.2.0 || return 1
+        install_release_tool fd 10.5.0 || return 1
+    fi
+    require_version zsh "$MIN_ZSH_VERSION" || return 1
     success "Core tools installed"
 }
 
 install_pnpm() {
-    log "Installing pnpm..."
-
-    local version
-
-    if [[ "$OS_TYPE" == "darwin" ]]; then
-        if ! brew_install_or_upgrade pnpm pnpm; then
-            return 1
-        fi
+    if [[ "$OS_TYPE" == darwin ]]; then
+        brew_install_or_upgrade pnpm pnpm || return 1
     else
-        if command_exists apt-cache && apt-cache show pnpm &>/dev/null; then
-            log "Installing/updating pnpm via apt..."
-            if ! run_with_sudo "pnpm apt package installation" apt-get install -y -qq pnpm; then
-                warning "pnpm installation via apt failed. Re-run with interactive sudo if pnpm is missing."
-                return 1
-            fi
-        elif command_exists corepack; then
-            log "Installing/updating pnpm via Corepack..."
-            if ! corepack enable >/dev/null 2>&1 || ! corepack prepare pnpm@latest --activate; then
-                warning "pnpm setup via Corepack failed"
-                if command_exists npm; then
-                    warning "Falling back to npm global pnpm installation"
-                    if ! npm install -g pnpm; then
-                        warning "pnpm installation via npm failed"
-                        return 1
-                    fi
-                else
-                    return 1
-                fi
-            fi
-        elif command_exists pnpm; then
-            success "pnpm already installed ($(pnpm --version 2>/dev/null || true))"
-            return 0
-        elif command_exists npm; then
-            warning "corepack not found; installing pnpm globally with npm"
-            if ! npm install -g pnpm; then
-                warning "pnpm installation via npm failed"
-                return 1
-            fi
-        else
-            warning "pnpm is not available from apt and neither corepack nor npm is installed"
-            return 1
-        fi
+        install_release_tool pnpm "$PNPM_VERSION" || return 1
     fi
-
-    version=$(pnpm --version 2>/dev/null || true)
-    if [[ -z "$version" ]]; then
-        warning "pnpm installation completed, but pnpm was not found in PATH"
-        return 1
-    fi
-
-    success "pnpm installed ($version)"
+    require_version pnpm "$PNPM_VERSION"
 }
 
 install_starship() {
-    log "Installing Starship..."
-
-    if [[ "$OS_TYPE" == "darwin" ]]; then
-        brew_install_or_upgrade starship starship
-        return 0
+    if [[ "$OS_TYPE" == darwin ]]; then
+        brew_install_or_upgrade starship starship || return 1
+    else
+        install_release_tool starship "$STARSHIP_VERSION" || return 1
     fi
-
-    if command_exists starship; then
-        success "Starship already installed ($(starship --version | head -1))"
-        return 0
-    fi
-
-    # Linux: install to ~/.local/bin to avoid sudo prompts in non-interactive runs.
-    ensure_user_local_bin_on_path
-    (
-        local temp_dir
-        temp_dir=$(mktemp -d)
-        trap "rm -rf '$temp_dir'" EXIT
-
-        if ! retry curl -fsSL https://starship.rs/install.sh -o "$temp_dir/starship-install.sh"; then
-            error "Failed to download Starship installer"
-        fi
-
-        sh "$temp_dir/starship-install.sh" -y -b "$HOME/.local/bin"
-    )
-
-    success "Starship installed"
+    require_version starship "$STARSHIP_VERSION"
 }
 
 install_yazi() {
-    log "Installing Yazi..."
-
-    if [[ "$OS_TYPE" == "linux" ]]; then
-        ensure_user_local_bin_on_path
-    fi
-
-    local installed_version
-    installed_version=$(yazi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-
-    if [[ "$OS_TYPE" != "darwin" ]] && command_exists yazi && command_exists ya && [[ -n "$installed_version" ]] && version_gte "$installed_version" "$MIN_YAZI_VERSION"; then
-        success "Yazi already installed ($installed_version)"
-        return 0
-    fi
-
-    if [[ "$OS_TYPE" == "darwin" ]]; then
-        brew_install_or_upgrade yazi yazi
+    if [[ "$OS_TYPE" == darwin ]]; then
+        brew_install_or_upgrade yazi yazi || return 1
     else
-        local target
-        case "$ARCH" in
-            amd64)
-                target="x86_64-unknown-linux-gnu"
-                ;;
-            arm64)
-                target="aarch64-unknown-linux-gnu"
-                ;;
-            *)
-                error "Unsupported Linux architecture for Yazi release install: $ARCH"
-                ;;
-        esac
-
-        (
-            local download_url="https://github.com/sxyazi/yazi/releases/download/v${YAZI_VERSION}/yazi-${target}.zip"
-            local temp_dir
-            temp_dir=$(mktemp -d)
-            trap "rm -rf '$temp_dir'" EXIT
-
-            log "Downloading Yazi ${YAZI_VERSION}..."
-            if ! retry curl -fsSL "$download_url" -o "$temp_dir/yazi.zip"; then
-                error "Failed to download Yazi ${YAZI_VERSION}"
-            fi
-
-            log "Installing Yazi binaries..."
-            unzip -q "$temp_dir/yazi.zip" -d "$temp_dir"
-            ensure_user_local_bin_on_path
-            cp "$temp_dir/yazi-${target}/yazi" "$HOME/.local/bin/yazi"
-            cp "$temp_dir/yazi-${target}/ya" "$HOME/.local/bin/ya"
-            chmod 755 "$HOME/.local/bin/yazi" "$HOME/.local/bin/ya"
-        )
+        install_release_tool yazi "$YAZI_VERSION" || return 1
     fi
-
-    installed_version=$(yazi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-    if ! command_exists yazi || ! command_exists ya || [[ -z "$installed_version" ]] || ! version_gte "$installed_version" "$MIN_YAZI_VERSION"; then
-        error "Yazi ${MIN_YAZI_VERSION}+ and matching ya CLI are required"
-    fi
-
-    success "Yazi installed ($installed_version)"
+    require_version yazi "$MIN_YAZI_VERSION" || return 1
+    require_version ya "$MIN_YAZI_VERSION" || return 1
+    [[ "$(tool_version yazi)" == "$(tool_version ya)" ]] || {
+        warning 'Yazi and ya versions differ; plugin setup blocked'
+        return 1
+    }
 }
 
 install_ghostty() {
-    log "Installing Ghostty..."
-
-    if [[ "$OS_TYPE" == "darwin" ]]; then
-        brew_install_or_upgrade ghostty ghostty
+    local before
+    before=$(tool_version ghostty)
+    if [[ -n "$before" ]] && version_gte "$before" "$GHOSTTY_VERSION"; then
+        success "Ghostty retained ($before)"
         return 0
     fi
-
-    if command_exists ghostty; then
-        success "Ghostty already installed"
-        return 0
-    fi
-
-    # Ubuntu: use snap for Ghostty
-    if command_exists snap; then
-        run_with_sudo "Ghostty snap installation" snap install ghostty --classic || {
-            warning "Ghostty snap installation failed. You may need to install it manually."
-            return 1
-        }
+    if apt-cache show ghostty >/dev/null 2>&1; then
+        run_with_sudo 'Ghostty apt installation' apt-get install -y ghostty || return 1
     else
-        warning "snap not found. Please install snapd: sudo apt install snapd"
+        if ! command_exists snap; then
+            run_with_sudo 'snapd prerequisite for Ghostty' apt-get install -y snapd || return 1
+        fi
+        if snap list ghostty >/dev/null 2>&1; then
+            run_with_sudo 'Ghostty stable update' snap refresh ghostty --channel=latest/stable || return 1
+        else
+            run_with_sudo 'Ghostty installation' snap install ghostty --classic --channel=latest/stable || return 1
+        fi
+    fi
+    require_version ghostty "$GHOSTTY_VERSION"
+}
+
+find_cmux() {
+    local app
+    for app in /Applications/cmux.app "$HOME/Applications/cmux.app"; do
+        if [[ -x "$app/Contents/Resources/bin/cmux" ]]; then
+            printf '%s\n' "$app"
+            return 0
+        fi
+    done
+    return 1
+}
+
+install_cmux() {
+    local app before="" system_version
+    system_version=$(sw_vers -productVersion)
+    if ! version_gte "$system_version" 14.0; then
+        warning "cmux requires macOS 14+; profile blocked on $system_version"
         return 1
     fi
-
-    success "Ghostty installed"
+    app=$(find_cmux || true)
+    if [[ -n "$app" ]]; then
+        before=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || true)
+    fi
+    if [[ -z "$before" ]] || ! version_gte "$before" "$CMUX_VERSION"; then
+        brew tap manaflow-ai/cmux || return 1
+        if brew list --cask cmux >/dev/null 2>&1; then
+            brew upgrade --cask cmux || return 1
+        elif [[ -n "$app" ]]; then
+            warning 'cmux outside Homebrew is below target; update it using cmux > Check for Updates'
+            return 1
+        else
+            brew install --cask cmux || return 1
+        fi
+    fi
+    app=$(find_cmux) || return 1
+    local after
+    after=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist") || return 1
+    version_gte "$after" "$CMUX_VERSION" || return 1
+    "$app/Contents/Resources/bin/cmux" --version || return 1
+    success "cmux ${before:-absent} -> $after"
 }
 
 ################################################################################
@@ -588,12 +1047,12 @@ install_fonts() {
     fi
     mkdir -p "$font_dir"
 
-    # Check if JetBrains Mono is already installed
-    if find "$font_dir" -maxdepth 1 \( -name "JetBrainsMono*.ttf" -o -name "JetBrainsMono*.otf" \) 2>/dev/null | grep -q .; then
-        success "JetBrains Mono already installed"
+    local installed_font_version
+    installed_font_version=$(font_version "$font_dir/JetBrainsMono-Regular.ttf")
+    if [[ -n "$installed_font_version" ]] && version_gte "$installed_font_version" "$JB_MONO_VERSION"; then
+        success "JetBrains Mono retained ($installed_font_version)"
         return 0
     fi
-
     log "Downloading JetBrains Mono..."
 
     if ! (
@@ -603,7 +1062,7 @@ install_fonts() {
 
         local download_url="https://github.com/JetBrains/JetBrainsMono/releases/download/v${JB_MONO_VERSION}/JetBrainsMono-${JB_MONO_VERSION}.zip"
 
-        if ! retry curl -fsSL "$download_url" -o "$temp_dir/jetbrains-mono.zip"; then
+        if ! verified_download "$download_url" "6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb7012f7bbf" "$temp_dir/jetbrains-mono.zip"; then
             warning "JetBrains Mono download failed"
             exit 1
         fi
@@ -620,6 +1079,9 @@ install_fonts() {
         warning "JetBrains Mono installation failed"
         return 1
     fi
+
+    require_font_version "$font_dir/JetBrainsMono-Regular.ttf" || return 1
+    log "JetBrains Mono ${installed_font_version:-unknown/absent} -> $(font_version "$font_dir/JetBrainsMono-Regular.ttf")"
 
     # Linux: refresh font cache
     if [[ "$OS_TYPE" == "linux" ]] && command_exists fc-cache; then
@@ -1004,6 +1466,18 @@ export PATH="$HOME/.local/bin:$PATH"
 # Auto-update Zinit plugins (once per day)
 # ============================================================================
 
+shell_backup_update_zinit() {
+    local plugin failed=0
+    zinit self-update -q || return 1
+    for plugin in zsh-users/zsh-autosuggestions zsh-users/zsh-syntax-highlighting zsh-users/zsh-history-substring-search ntnyq/omz-plugin-pnpm ntnyq/omz-plugin-bun MichaelAquilina/zsh-you-should-use OMZP::git OMZP::bun OMZP::alias-finder; do
+        zinit update -q "$plugin" || failed=1
+    done
+    if [[ "$(uname -s)" == Darwin ]]; then
+        zinit update -q OMZP::command-not-found || failed=1
+    fi
+    return "$failed"
+}
+
 # Check for updates once per day using a timestamp file.
 # The installer sets SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE=1 to avoid racing a
 # background update while it is still provisioning plugins.
@@ -1060,7 +1534,7 @@ if [[ -z "${SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE:-}" ]] && command -v zinit >/dev
             (
                 {
                     print "[$(date)] Starting Zinit update"
-                    if zinit self-update -q && zinit update --all -q; then
+                    if shell_backup_update_zinit; then
                         print "[$(date)] Zinit update completed"
                         command rm -f "$zinit_update_failed" 2>/dev/null || true
                     else
@@ -1077,7 +1551,8 @@ if [[ -z "${SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE:-}" ]] && command -v zinit >/dev
     unset zinit_update_dir zinit_update_stamp zinit_update_lock zinit_update_log zinit_update_failed zinit_failed_at update_interval lock_ttl current_time last_update lock_time
 fi
 
-
+# Machine-local preferences survive setup reruns.
+[[ -f "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"
 
 ZSHRC_EOF
 
@@ -1104,7 +1579,7 @@ deploy_ghostty_config() {
     local platform_config
     if [[ "$OS_TYPE" == "darwin" ]]; then
         fullscreen_keybind="keybind = cmd+shift+f=toggle_fullscreen"
-        platform_config=$'# macOS UI state restore: windows, tabs, splits, and working directories.\n# This does not resurrect running shell processes or command output.\nwindow-save-state = always\n\n# macOS specific\nfont-thicken = true'
+        platform_config=$'# Shared rendering configuration read by cmux.\nfont-thicken = true'
     else
         fullscreen_keybind="keybind = alt+shift+f=toggle_fullscreen"
         platform_config="# Linux: Ghostty state restore is macOS-only, so no window-save-state is set."
@@ -1128,6 +1603,9 @@ keybind = shift+enter=text:\x1b\r
 # Remove padding
 window-padding-x = 0
 window-padding-y = 0
+
+# Optional, machine-local overrides (never overwritten by setup).
+config-file = ?config.local
 
 GHOSTTY_EOF
 
@@ -1595,19 +2073,38 @@ unalias gswf 2>/dev/null || true
 
 gswf() {
     local query="${1:-}"
+    local refs
+    refs=$(git for-each-ref --format='%(refname)%09%(upstream)%09%(symref)' \
+        refs/heads/ refs/remotes/) || return
+
+    # Use plain ref names, and represent a tracked remote by its local branch.
+    # This also avoids counting origin/foo and foo as separate matches.
     local branches
     branches=$(
-        git pull --quiet 2>/dev/null;
-        git branch --all \
-        | grep -v 'HEAD' \
-        | sed 's/^[* ]*//' \
-        | sed 's|^remotes/[^/]*/||' \
+        printf '%s\n' "$refs" | awk -F '\t' '
+            $1 ~ /^refs\/heads\// {
+                name = substr($1, 12)
+                print name
+                if ($2 != "") tracked[$2] = 1
+            }
+            $1 ~ /^refs\/remotes\// && $3 == "" {
+                remote[$1] = 1
+            }
+            END {
+                for (ref in remote) {
+                    if (!(ref in tracked)) {
+                        sub(/^refs\/remotes\/[^/]*\//, "", ref)
+                        print ref
+                    }
+                }
+            }
+        ' \
         | sort -u
     )
 
     local filtered
     if [[ -n "$query" ]]; then
-        filtered=$(echo "$branches" | grep -iF -- "$query" || true)
+        filtered=$(printf '%s\n' "$branches" | grep -iF -- "$query" || true)
     else
         filtered="$branches"
     fi
@@ -1616,7 +2113,7 @@ gswf() {
     if [[ -z "$filtered" ]]; then
         count=0
     else
-        count=$(echo "$filtered" | wc -l | tr -d ' ')
+        count=$(printf '%s\n' "$filtered" | wc -l | tr -d ' ')
     fi
 
     local branch
@@ -1631,13 +2128,13 @@ gswf() {
             echo "gswf: fzf is required when multiple branches match" >&2
             return 1
         fi
-        branch=$(echo "$filtered" | fzf --query "$query" --preview 'git log -n 20 --color --oneline {}')
+        branch=$(printf '%s\n' "$filtered" | fzf --query "$query" --preview 'git log -n 20 --color --oneline {}') || return 0
         if [[ -z "$branch" ]]; then
             return 0
         fi
     fi
 
-    git switch "$branch"
+    git switch -- "$branch"
 }
 GSWF_EOF
     chmod 644 "$HOME/.zsh/gswf.zsh"
@@ -1689,13 +2186,14 @@ setup_shell() {
     # Check if zsh is already the default (handle different path formats)
     if [[ "${SHELL:-}" == *"zsh"* ]]; then
         success "zsh is already the default shell"
-    elif [[ ! -t 0 ]] || [[ "$NON_INTERACTIVE" == true ]]; then
+    elif ! can_prompt; then
         # Non-interactive: skip chsh to avoid hang (tty check OR explicit flag)
         warning "Non-interactive mode detected. Skipping 'chsh' (would prompt for password)."
         warning "To change shell manually, run: chsh -s $zsh_path"
+        return 3
     else
         log "Changing default shell to $zsh_path..."
-        chsh -s "$zsh_path"
+        chsh -s "$zsh_path" </dev/tty
         success "Default shell changed to zsh"
     fi
 }
@@ -1705,94 +2203,37 @@ setup_shell() {
 ################################################################################
 
 setup_nvm() {
-    log "Setting up NVM (Node Version Manager)..."
-
     export NVM_DIR="$HOME/.nvm"
-    local restore_nounset=false
-
-    if [[ ! -d "$NVM_DIR" ]]; then
-        log "Installing NVM..."
+    local before="" node_before="" restore_nounset=false
+    if [[ -s "$NVM_DIR/nvm.sh" ]]; then
+        before=$( (set +u; . "$NVM_DIR/nvm.sh"; nvm --version) )
+    fi
+    if [[ -z "$before" ]] || ! version_gte "$before" "$NVM_INSTALL_VERSION"; then
         (
             local temp_dir
             temp_dir=$(mktemp -d)
-            trap "rm -rf '$temp_dir'" EXIT
-
-            if ! retry curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_INSTALL_VERSION}/install.sh" -o "$temp_dir/nvm-install.sh"; then
-                error "Failed to download NVM installer"
-            fi
-
-            bash "$temp_dir/nvm-install.sh"
-        )
+            trap 'rm -rf "$temp_dir"' EXIT
+            verified_download "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_INSTALL_VERSION}/install.sh" \
+                "066ce4eaf4d78eaa6410433bc9ba58faaba646157cbbed6109153e6c24c5f8a5" "$temp_dir/install.sh" || exit 1
+            PROFILE=/dev/null bash "$temp_dir/install.sh" || exit 1
+        ) || return 1
+    fi
+    [[ ! -o nounset ]] || { set +u; restore_nounset=true; }
+    . "$NVM_DIR/nvm.sh"
+    version_gte "$(nvm --version)" "$NVM_INSTALL_VERSION" || return 1
+    node_before=$(node --version 2>/dev/null || true)
+    if [[ -n "$node_before" ]] && version_gte "${node_before#v}" "$NODE_VERSION"; then
+        success "Active newer Node retained ($node_before)"
     else
-        success "NVM already installed"
+        # nvm verifies Node's published checksum. Do not migrate global npm
+        # packages: they may include harnesses outside this script's scope.
+        nvm install "$NODE_VERSION" || return 1
+        nvm alias default "$NODE_VERSION" || return 1
+        nvm use "$NODE_VERSION" || return 1
     fi
-
-    if [[ ! -s "$NVM_DIR/nvm.sh" ]]; then
-        error "NVM installation is incomplete: $NVM_DIR/nvm.sh not found"
-    fi
-
-    # nvm.sh is not nounset-safe, so temporarily relax `set -u` while sourcing
-    # it and running the initial `nvm` commands.
-    if [[ -o nounset ]]; then
-        set +u
-        restore_nounset=true
-    fi
-
-    # Source NVM for current session
-    # shellcheck disable=SC1090
-    \. "$NVM_DIR/nvm.sh"
-
-    if ! command -v nvm >/dev/null 2>&1; then
-        error "Failed to load NVM from $NVM_DIR/nvm.sh"
-    fi
-
-    local installed_lts_version current_version latest_lts_version package_source_version node_version_after
-    installed_lts_version=$(nvm version 'lts/*' 2>/dev/null || echo "N/A")
-    current_version=$(nvm current 2>/dev/null || echo "none")
-    latest_lts_version=$(nvm ls-remote --lts 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | tail -1 || true)
-    package_source_version=""
-
-    if [[ "$installed_lts_version" != "N/A" ]]; then
-        package_source_version="$installed_lts_version"
-    elif [[ "$current_version" == v* ]]; then
-        package_source_version="$current_version"
-    fi
-
-    if [[ -z "$latest_lts_version" ]]; then
-        if [[ "$installed_lts_version" == "N/A" ]]; then
-            warning "Could not determine latest remote Node LTS. Falling back to nvm install --lts."
-            nvm install --lts
-        else
-            warning "Could not determine latest remote Node LTS. Keeping installed LTS $installed_lts_version."
-        fi
-    elif [[ "$installed_lts_version" == "$latest_lts_version" ]]; then
-        success "Latest Node LTS already installed ($installed_lts_version)"
-    elif [[ -n "$package_source_version" ]]; then
-        warning "Node LTS will change from ${installed_lts_version} to ${latest_lts_version}. Global npm packages will be reinstalled from ${package_source_version} where possible."
-        nvm install "$latest_lts_version" --reinstall-packages-from="$package_source_version"
-    else
-        log "Installing latest Node LTS via NVM ($latest_lts_version)..."
-        nvm install "$latest_lts_version"
-    fi
-
-    nvm alias default 'lts/*' >/dev/null 2>&1 || true
-    nvm use --lts >/dev/null
-
-    if [[ "$restore_nounset" == true ]]; then
-        set -u
-    fi
-
-    if ! command -v node >/dev/null 2>&1; then
-        error "Node LTS is still unavailable after NVM setup"
-    fi
-
-    node_version_after=$(node --version)
-    if [[ -n "$package_source_version" ]] && [[ "$package_source_version" != "$node_version_after" ]]; then
-        success "NVM and latest Node LTS active ($node_version_after)"
-        warning "Node changed from $package_source_version to $node_version_after. Review global packages with: npm list -g --depth=0"
-    else
-        success "NVM and Node LTS installed ($node_version_after)"
-    fi
+    [[ "$restore_nounset" != true ]] || set -u
+    log "NVM ${before:-absent} -> $(nvm --version); Node ${node_before:-absent} -> $(node --version)"
+    require_version node "$NODE_VERSION"
 }
 
 ################################################################################
@@ -1803,6 +2244,7 @@ setup_zinit_plugins() {
     log "Setting up Zinit plugins..."
 
     # First, ensure zinit is installed
+    require_version zsh "$MIN_ZSH_VERSION" || return 1
     if [[ ! -f $HOME/.local/share/zinit/zinit.git/zinit.zsh ]]; then
         log "Installing Zinit plugin manager..."
         command mkdir -p "$HOME/.local/share/zinit" && command chmod g-rwX "$HOME/.local/share/zinit"
@@ -1811,10 +2253,7 @@ setup_zinit_plugins() {
         fi
     fi
 
-    if verify_zinit_assets; then
-        success "Zinit plugins already installed"
-        return 0
-    fi
+    require_version zsh "$MIN_ZSH_VERSION" || return 1
 
     # Run zsh to download and install all plugins
     log "Installing plugins (this may take a minute)..."
@@ -1841,6 +2280,13 @@ setup_zinit_plugins() {
             zinit light "$plugin" >/dev/null
         done
 
+        zinit self-update -q || exit 1
+        for plugin in zsh-users/zsh-autosuggestions zsh-users/zsh-syntax-highlighting zsh-users/zsh-history-substring-search ntnyq/omz-plugin-pnpm ntnyq/omz-plugin-bun MichaelAquilina/zsh-you-should-use OMZP::git OMZP::bun OMZP::alias-finder; do
+            zinit update -q "$plugin" || exit 1
+        done
+        if [[ "$(uname -s)" == Darwin ]]; then
+            zinit update -q OMZP::command-not-found || exit 1
+        fi
         exit 0
     '; then
         error "Zinit plugin bootstrap failed"
@@ -1850,7 +2296,10 @@ setup_zinit_plugins() {
         error "Zinit plugin bootstrap incomplete"
     fi
 
-    success "Zinit plugins installed"
+    local zinit_version
+    zinit_version=$(cat "$HOME/.local/share/zinit/zinit.git/VERSION")
+    version_gte "$zinit_version" 3.17.0 || return 1
+    success "Zinit $zinit_version and managed plugins installed"
 }
 
 ################################################################################
@@ -1859,6 +2308,20 @@ setup_zinit_plugins() {
 
 setup_yazi_plugins() {
     log "Setting up Yazi plugins..."
+    require_version yazi "$MIN_YAZI_VERSION" || return 1
+    require_version ya "$MIN_YAZI_VERSION" || return 1
+    require_version starship "$STARSHIP_VERSION" || return 1
+    [[ "$(tool_version yazi)" == "$(tool_version ya)" ]] || return 1
+    command_exists git || return 1
+    # Check current upstream requirements before changing installed plugins.
+    local metadata required plugin_url
+    for plugin_url in \
+        https://raw.githubusercontent.com/yazi-rs/plugins/main/git.yazi/main.lua \
+        https://raw.githubusercontent.com/Rolv-Apneseth/starship.yazi/main/main.lua; do
+        metadata=$(curl -fsSL --connect-timeout 15 --max-time 30 "$plugin_url") || return 1
+        required=$(printf '%s\n' "$metadata" | sed -nE 's/^--- @since ([0-9.]+).*/\1/p' | head -1)
+        [[ -z "$required" ]] || require_version yazi "$required" || return 1
+    done
 
     if [[ "$OS_TYPE" == "linux" ]]; then
         ensure_user_local_bin_on_path
@@ -1889,17 +2352,16 @@ setup_yazi_plugins() {
         success "Yazi plugin packages already listed"
     fi
 
-    if [[ ${#missing_plugins[@]} -gt 0 ]] || ! verify_yazi_assets; then
-        log "Installing locked Yazi plugin packages..."
-        ya pkg install
-    else
-        success "Yazi plugin assets already installed"
-    fi
-
-    if ! verify_yazi_assets; then
-        error "Yazi plugin bootstrap incomplete"
-    fi
-
+    # Upgrade only our two packages. The manager preserves pinned revisions
+    # and refuses to discard local edits. Never install/upgrade other entries.
+    ya pkg upgrade yazi-rs/plugins:git Rolv-Apneseth/starship || return 1
+    verify_yazi_assets || return 1
+    local plugin_file required
+    for plugin_file in "$HOME/.config/yazi/plugins/git.yazi/main.lua" "$HOME/.config/yazi/plugins/starship.yazi/main.lua"; do
+        required=$(sed -nE 's/^--- @since ([0-9.]+).*/\1/p' "$plugin_file" | head -1)
+        [[ -z "$required" ]] || require_version yazi "$required" || return 1
+    done
+    ya pkg list
     success "Yazi plugins installed"
 }
 
@@ -1957,12 +2419,21 @@ verify_installation() {
     check_versioned_cmd "yazi" "$MIN_YAZI_VERSION" \
         "$(yazi --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 
-    check_cmd "node"
-    check_cmd "pnpm"
-    check_cmd "starship"
-    check_cmd "fzf"
-    check_cmd "ghostty"
-    check_cmd "ya"
+    local item name minimum
+    for item in "node:$NODE_VERSION" "pnpm:$PNPM_VERSION" "starship:$STARSHIP_VERSION" \
+        fzf:0.74.3 zoxide:0.10.0 rg:15.2.0 fd:10.5.0 "ya:$MIN_YAZI_VERSION"; do
+        name="${item%%:*}"; minimum="${item#*:}"
+        check_versioned_cmd "$name" "$minimum" "$(tool_version "$name")"
+    done
+    if [[ "$OS_TYPE" == linux ]]; then
+        check_versioned_cmd ghostty "$GHOSTTY_VERSION" "$(tool_version ghostty)"
+    else
+        check_path cmux "$(find_cmux || printf '/missing-cmux')"
+    fi
+    check_path 'Terminal rendering config' "$HOME/.config/ghostty/config"
+    if [[ "$OS_TYPE" == linux || "$HERDR_READY" == true || "$WITH_HERDR" == true ]]; then
+        check_versioned_cmd "${HERDR_BIN:-herdr}" "$HERDR_VERSION" "$(tool_version "${HERDR_BIN:-herdr}")"
+    fi
 
     check_path "Zinit" "$HOME/.local/share/zinit/zinit.git"
     check_path ".zshenv" "$HOME/.zshenv"
@@ -1987,7 +2458,7 @@ verify_installation() {
         font_dir="$HOME/.local/share/fonts"
     fi
     checks_total=$((checks_total + 1))
-    if find "$font_dir" -maxdepth 1 \( -name "JetBrainsMono*.ttf" -o -name "JetBrainsMono*.otf" \) 2>/dev/null | grep -q .; then
+    if require_font_version "$font_dir/JetBrainsMono-Regular.ttf"; then
         success "JetBrains Mono installed"
         checks_passed=$((checks_passed + 1))
     else
@@ -1995,6 +2466,8 @@ verify_installation() {
     fi
 
     log "Verification: $checks_passed/$checks_total checks passed"
+    [[ "$checks_passed" == "$checks_total" ]]
+
 }
 
 ################################################################################
@@ -2002,47 +2475,22 @@ verify_installation() {
 ################################################################################
 
 print_summary() {
-    cat << 'SUMMARY_EOF'
-
-═══════════════════════════════════════════════════════════════════════════════
-                           ✓ SETUP COMPLETE
-═══════════════════════════════════════════════════════════════════════════════
-
-Installed Components:
-  ✓ zsh (default shell)
-  ✓ Zinit plugin manager (9 plugins)
-  ✓ Ghostty terminal with tabs and splits
-  ✓ Starship modern prompt
-  ✓ Yazi file manager with git + Starship plugins and Starship-matched theme
-  ✓ fzf, zoxide, ripgrep, fd
-  ✓ NVM + Node.js LTS
-  ✓ pnpm package manager
-  ✓ JetBrains Mono font
-  ✓ Auto-update on shell startup (once per day)
-  ✓ Custom functions (gswf, y)
-
-Quick Start:
-  1. Close and reopen your terminal (or: exec zsh)
-  2. Test shell: zinit plugins
-  3. Try git alias: ga status
-  4. Try pnpm shortcut: p --version
-  5. Try Yazi: yazi
-  6. Try fuzzy finder: Ctrl+T in file path
-
-Useful Commands:
-  - View plugins: zinit plugins
-  - View plugin report: zinit report
-  - View Yazi plugins: ya pkg list
-
-Documentation & Logs:
-  - Installation log: ~/.setup.log
-  - Backup configs: ~/.backup/
-  - Repository: https://github.com/ngarate/shell-backup
-  - Troubleshooting: See TROUBLESHOOTING.md in repo
-
-═══════════════════════════════════════════════════════════════════════════════
-
-SUMMARY_EOF
+    printf '\nSetup results (%s/%s):\n' "$OS_TYPE" "$ARCH"
+    if [[ ${#RESULTS[@]} -gt 0 ]]; then
+        printf '  %s\n' "${RESULTS[@]}"
+    fi
+    printf '\nVersions before setup:\n%s\n' "${VERSIONS_BEFORE:-not captured}"
+    printf '\nVersions after setup:\n'
+    version_inventory
+    printf '\nLogs: %s\nBackups: %s\n' "$SETUP_LOG" "$BACKUP_DIR"
+    printf '%s\n' 'Reload: exec zsh | Plugins: zinit list; ya pkg list' \
+        'Local preferences: ~/.zshrc.local and ~/.config/ghostty/config.local' \
+        'Mobile: TermRover -> SSH/Mosh host -> Herdr session (see README.md)'
+    if [[ "$SETUP_FAILED" == true ]]; then
+        warning 'Setup finished with failures or blocked requirements; review the results above'
+    else
+        success 'Setup finished; see skipped optional components above'
+    fi
 }
 
 ################################################################################
@@ -2050,6 +2498,7 @@ SUMMARY_EOF
 ################################################################################
 
 main() {
+    parse_args "$@"
     initialize_log
 
     # Warn if running as root (configs will go to root's $HOME)
@@ -2064,32 +2513,50 @@ main() {
 
     check_prerequisites
     setup_package_manager
-    install_core_tools
-    install_starship
-    install_yazi
-    install_ghostty || true
-    install_fonts || true
+    ensure_user_local_bin_on_path
+    export PATH="$HOME/.local/bin:/snap/bin:$PATH"
+    VERSIONS_BEFORE=$(version_inventory)
+    log 'Versions before setup:'
+    printf '%s\n' "$VERSIONS_BEFORE" | tee -a "$SETUP_LOG"
+    run_stage 'Core tools' install_core_tools
+    run_stage Starship install_starship
+    run_stage Yazi install_yazi
+    if [[ "$OS_TYPE" == darwin ]]; then
+        run_stage cmux install_cmux
+        record_result Ghostty skipped 'macOS uses cmux; shared rendering config is deployed'
+    else
+        run_stage Ghostty install_ghostty
+        record_result cmux skipped 'Linux uses Ghostty'
+    fi
+    setup_herdr
+    run_stage Fonts install_fonts
 
-    deploy_zshenv
-    deploy_zshrc
-    deploy_ghostty_config
-    deploy_yazi_config
-    deploy_starship_config
-    deploy_custom_functions
-
-    setup_shell
-    setup_nvm
-    install_pnpm || true
-    setup_zinit_plugins
-    setup_yazi_plugins
-
-    verify_installation
-
+    run_stage '.zshenv' deploy_zshenv
+    run_stage '.zshrc' deploy_zshrc
+    run_stage 'Terminal config' deploy_ghostty_config
+    run_stage 'Yazi config' deploy_yazi_config
+    run_stage 'Starship config' deploy_starship_config
+    run_stage 'Custom functions' deploy_custom_functions
+    run_stage 'Default shell' setup_shell
+    run_stage 'NVM / Node' setup_nvm
+    # Activate NVM's selected default for subsequent verification in this shell.
+    if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
+        set +u
+        if ! . "$HOME/.nvm/nvm.sh"; then
+            record_result 'NVM activation' failed 'could not load installed NVM'
+        fi
+        set -u
+    fi
+    run_stage pnpm install_pnpm
+    run_stage 'Zinit plugins' setup_zinit_plugins
+    run_stage 'Yazi plugins' setup_yazi_plugins
+    run_stage Verification verify_installation
     print_summary
+    [[ "$SETUP_FAILED" != true ]]
 
-    log "=== SHELL-BACKUP: Setup Complete ==="
-    success "All done!"
 }
 
 # Run main function
-main
+if [[ "${BASH_SOURCE[0]:-}" == "$0" || -z "${BASH_SOURCE[0]:-}" ]]; then
+    main "$@"
+fi

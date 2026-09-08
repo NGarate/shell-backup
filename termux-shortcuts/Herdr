@@ -1,0 +1,27 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Copiar a ~/.shortcuts/Herdr. Usuario, puerto y clave van en ~/.ssh/config.
+set -uo pipefail
+
+HOST="${HOST:-laptop}"          # Alias de ~/.ssh/config
+SESION="${SESION:-personal}"    # Misma sesion que en el ordenador
+TRANSPORTE="${TRANSPORTE:-auto}" # auto: Mosh con respaldo SSH; ssh: solo SSH
+
+# La sesion se inserta en un comando remoto: admite nombres simples.
+[[ "$SESION" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$ ]] || {
+    printf '%s\n' 'SESION debe usar letras, numeros, puntos, guiones o guiones bajos.' >&2
+    exit 1
+}
+export TERM="${TERM:-xterm-256color}" COLORTERM=truecolor
+remote_script='export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH" COLORTERM=truecolor; '
+remote_script+="exec herdr session attach $SESION"
+
+printf 'Herdr: %s -> %s (desconectar: Ctrl+Espacio, q)\n' "$HOST" "$SESION"
+if [[ "$TRANSPORTE" == auto ]] && command -v mosh >/dev/null 2>&1; then
+    mosh --ssh='ssh -o RemoteCommand=none -T' "$HOST" -- bash -lc "$remote_script"
+    status=$?
+    case "$status" in
+        0|130|143) exit "$status" ;; # Desconexion normal o cancelacion: no reconectar.
+    esac
+    printf 'Mosh termino con codigo %s; intentando SSH...\n' "$status" >&2
+fi
+exec ssh -t -o RemoteCommand=none "$HOST" "bash -lc '$remote_script'"

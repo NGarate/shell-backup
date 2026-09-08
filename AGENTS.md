@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents (Codex, Claude Code, etc.) when 
 
 ## Project Overview
 
-This is a single-file shell automation script (`setup.sh`) that provisions a complete development environment (zsh, Ghostty, Starship, Yazi, fzf, etc.) on Apple Silicon macOS and apt-based Linux on amd64/arm64. The script is self-contained: all configuration files (`.zshrc`, Yazi config, `starship.toml`, Ghostty config) are embedded as heredocs within `setup.sh` itself, making it work when piped via `curl | bash`.
+This is a single-file shell automation script (`setup.sh`) that provisions a complete development environment (zsh, platform terminal (Ghostty on Linux / cmux on macOS), Herdr, Starship, Yazi, fzf, etc.) on Apple Silicon macOS and apt-based Linux on amd64/arm64. The script is self-contained: all configuration files (`.zshrc`, Yazi config, `starship.toml`, Ghostty config) are embedded as heredocs within `setup.sh` itself, making it work when piped via `curl | bash`.
 
 ## Architecture
 
@@ -19,7 +19,7 @@ This is a single-file shell automation script (`setup.sh`) that provisions a com
 7. **Shell configuration** — deploys embedded `.zshrc` with Zinit plugins, NVM, pnpm, env file loading, per-terminal history, and Ghostty config
 8. **Yazi configuration** — deploys embedded `init.lua` and `yazi.toml` for Git status and Starship prompt plugins
 9. **Starship configuration** — deploys embedded `starship.toml` with multiple color palettes (`old`, `normal`, `light`)
-10. **Custom functions** — deploys `~/.zsh/gcof.zsh` (fuzzy git branch checkout)
+10. **Custom functions** — deploys `~/.zsh/gswf.zsh` (fuzzy git branch switching)
 11. **Shell setup** — sets zsh as default via `chsh`
 12. **NVM setup** — installs NVM + Node LTS
 13. **Zinit plugins** — bootstraps Zinit and installs all plugins
@@ -33,11 +33,14 @@ Key design decisions:
 - Yazi uses Homebrew on macOS and pinned official GitHub release binaries on Linux so plugin minimum versions are satisfied
 - The `.zshrc` uses `PNPM_HOME_PLACEHOLDER` which gets `sed`-replaced after heredoc deployment
 - Script uses `set -euo pipefail` — any unhandled failure exits immediately
-- Idempotent: checks if tools/configs exist before installing
+- Idempotent: checks versions and real integration status before installing; Herdr selection reads `/dev/tty`.
+- Herdr integrations are optional and existing integrations must never be rewritten automatically.
+- `run_stage` isolates failures while keeping Bash errexit active, then records actual outcomes.
+- Target versions, checksums, dependencies and validation limitations are documented in `DEPENDENCIES.md`.
 
 ## Testing
 
-There is no automated test suite. To verify changes:
+Isolated acceptance tests are in `tests/test_setup.py`. Run `bash -n setup.sh` and `python3 -m unittest discover -s tests -v`; they do not install software. Platform validation remains manual; see `DEPENDENCIES.md`. To verify on a disposable target machine:
 
 ```bash
 # Run the script (idempotent, safe to re-run)
@@ -61,6 +64,6 @@ When modifying configuration for zsh, Yazi, Starship, Ghostty, or custom functio
 - `YAZI_INIT_EOF` — Yazi `init.lua` content (section 8)
 - `YAZI_TOML_EOF` — Yazi `yazi.toml` content (section 8)
 - `STARSHIP_EOF` — `starship.toml` (section 9)
-- `GCOF_EOF` — gcof function (section 10)
+- `GSWF_EOF` — gswf function (section 10)
 
-Note: `GHOSTTY_EOF` is an **unquoted** heredoc (variable interpolation is active), while `ZSHRC_EOF`, `YAZI_INIT_EOF`, `YAZI_TOML_EOF`, `STARSHIP_EOF`, and `GCOF_EOF` are **single-quoted** (literal content, no interpolation).
+Note: `GHOSTTY_EOF` is an **unquoted** heredoc (variable interpolation is active), while `ZSHRC_EOF`, `YAZI_INIT_EOF`, `YAZI_TOML_EOF`, `STARSHIP_EOF`, and `GSWF_EOF` are **single-quoted** (literal content, no interpolation).

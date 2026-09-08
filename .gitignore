@@ -35,3 +35,6 @@ Thumbs.db
 *.temp
 .cache/
 .npm/
+
+# Isolated Python acceptance tests
+__pycache__/
