@@ -11,6 +11,7 @@ import time
 import signal
 import tarfile
 import hashlib
+import shutil
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'setup.sh'
 
@@ -314,6 +315,59 @@ retry() {{ cp "$HOME/archive.tar.gz" "${{@: -1}}"; }}
         self.assertIn('source "$HOME/.zshrc.local"', (self.home / '.zshrc').read_text())
         self.assertIn('config-file = ?config.local', (config / 'config').read_text())
         self.assertTrue(list((self.home / '.backup').iterdir()))
+
+    @unittest.skipUnless(shutil.which('zsh') and shutil.which('fzf'),
+                         'zsh and fzf are required for branch selection checks')
+    def test_gswf_single_match_does_not_require_picker_input(self):
+        self.run_shell('deploy_custom_functions')
+        (self.bin / 'fzf').symlink_to(shutil.which('fzf'))
+        self.env.update(GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1',
+                        FZF_DEFAULT_OPTS='', FZF_DEFAULT_OPTS_FILE='', TERM='xterm-256color')
+        self.run_shell('''cd "$HOME"
+git init -q -b main
+git -c user.name=Test -c user.email=test@example.invalid -c core.hooksPath=/dev/null commit -qm Initial --allow-empty
+git branch feature/ISSUE-123
+git branch feature/issue-456
+''')
+        # grep's case-insensitive prefilter sees two branches for ISSUE, while
+        # fzf's smart-case query shows only one. Neither query should need Enter.
+        for query in ('ISSUE-123', 'ISSUE'):
+            with self.subTest(query=query):
+                self.run_shell('git -C "$HOME" switch -q main')
+                pid, master = pty.fork()
+                if pid == 0:
+                    os.chdir(self.home)
+                    os.execve(shutil.which('zsh'), ['zsh', '-f', '-c',
+                              'source "$HOME/.zsh/gswf.zsh"; gswf "$1"',
+                              'zsh', query], self.env)
+                output = b''
+                status = None
+                deadline = time.monotonic() + 5
+                try:
+                    while time.monotonic() < deadline:
+                        if select.select([master], [], [], 0.1)[0]:
+                            try:
+                                output += os.read(master, 65536)
+                            except OSError:
+                                pass  # PTY closes just before the child exits.
+                        result, child_status = os.waitpid(pid, os.WNOHANG)
+                        if result:
+                            status = child_status
+                            pid = 0
+                            break
+                    self.assertIsNotNone(status, 'gswf waited for picker input')
+                    self.assertEqual(os.waitstatus_to_exitcode(status), 0, output.decode())
+                    self.assertNotIn(b'\x1b[?1049h', output, 'fzf opened the interactive screen')
+                    branch = self.run_shell('git -C "$HOME" branch --show-current')
+                    self.assertEqual(branch.strip(), 'feature/ISSUE-123')
+                finally:
+                    if pid:
+                        try:
+                            os.killpg(pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        os.waitpid(pid, 0)
+                    os.close(master)
 
     def test_macos_old_os_blocks_native_terminal(self):
         output = self.run_shell("""OS_TYPE=darwin

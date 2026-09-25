@@ -2128,7 +2128,8 @@ gswf() {
             echo "gswf: fzf is required when multiple branches match" >&2
             return 1
         fi
-        branch=$(printf '%s\n' "$filtered" | fzf --query "$query" --preview 'git log -n 20 --color --oneline {}') || return 0
+        # fzf's query/options can narrow the prefiltered list to one match.
+        branch=$(printf '%s\n' "$filtered" | fzf --select-1 --query "$query" --preview 'git log -n 20 --color --oneline {}') || return 0
         if [[ -z "$branch" ]]; then
             return 0
         fi
