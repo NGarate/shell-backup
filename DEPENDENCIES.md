@@ -48,6 +48,8 @@ Optional Yazi preview helpers such as ffmpeg, 7zip, jq, Poppler and ImageMagick 
 
 Plugins without a stable release contract track their official default branches through their existing managers. This preserves the repository's daily shell-plugin update convention. Revisions are reported rather than pretending they have numeric releases. Local edits and explicit Yazi revision pins are not discarded. Only named managed plugins are updated; unrelated user plugins are not selected.
 
+Zinit's URL-snippet downloader overwrites the live file and deletes it after failed retries ([upstream source](https://github.com/zdharma-continuum/zinit/blob/main/zinit-install.zsh)), so no managed plugin is a URL snippet. The OMZ plugins load from a shallow (`depth 1`) Git clone of `ohmyzsh/ohmyzsh` (about 15 MB) via Zinit `multisrc`, with `pick"/dev/null"` (the OMZ framework is never sourced) and `nocompletions`. Every managed plugin is a Git repository updated with Zinit's `git pull --ff-only`: a failed fetch leaves the installed files untouched. The managed list lives only in the deployed `~/.zsh/zinit-update.zsh`, which the setup bootstrap, verification and the daily background job read. That job sources the file only when it runs. Because `zinit update` returns success when its fetch fails, the updater fetches each plugin first so failures produce the failure marker. Setup removes the former `OMZP::*` snippets once the clone exists, so a manual `zinit update --all` is safe for managed plugins.
+
 | Plugin/library | Target/source | Requirements and verification |
 |---|---|---|
 | Zinit | 3.17.0+, [official main](https://github.com/zdharma-continuum/zinit) | zsh 5.9, Git; self-update and check `VERSION` |
@@ -57,7 +59,7 @@ Plugins without a stable release contract track their official default branches 
 | omz-plugin-pnpm | [ntnyq](https://github.com/ntnyq/omz-plugin-pnpm) default branch | pnpm for its commands |
 | omz-plugin-bun | [ntnyq](https://github.com/ntnyq/omz-plugin-bun) default branch | optional user-installed Bun |
 | zsh-you-should-use | [MichaelAquilina](https://github.com/MichaelAquilina/zsh-you-should-use) default branch | zsh and aliases |
-| OMZ snippets | [Oh My Zsh](https://github.com/ohmyzsh/ohmyzsh/tree/master/plugins): git, bun, alias-finder; command-not-found on macOS | Git; optional Bun; platform command-not-found helper. No full OMZ framework installation. |
+| Oh My Zsh plugins | [Oh My Zsh](https://github.com/ohmyzsh/ohmyzsh) default branch, shallow clone: git, bun, alias-finder; command-not-found on macOS | Git; optional Bun; platform command-not-found helper. The OMZ framework is not loaded. |
 | Yazi Git | [yazi-rs/plugins:git](https://github.com/yazi-rs/plugins/tree/main/git.yazi), audited `4dc7f1b` | Current `@since` is **26.8.15**, above the former 26.5.6 target. Fetch current minimum before any plugin mutation and check deployed minimum afterwards. |
 | Yazi Starship | [Rolv-Apneseth/starship](https://github.com/Rolv-Apneseth/starship.yazi), audited `ea92cf4` | Yazi 25.4.8+ and working Starship; managed via `ya pkg` |
 
@@ -82,10 +84,11 @@ Executed in a restricted Linux amd64 workspace:
 
 - `bash -n setup.sh` and `git diff --check`.
 - `python3 -m unittest discover -s tests -v`: isolated status/selector/profile/version tests, with temporary homes and inert binaries. Includes fresh install and old-version upgrade paths, repeated runs, partial/all/empty selections, missing harnesses, failed installs/checks, Ctrl+C/EOF cancellation, CI/no terminal, actual pipe + controlling PTY, checksums, retaining newer versions, and failed stages continuing without disabling Bash errexit.
+- Zinit: reproduced removal of an installed URL snippet when the download fails, with upstream revision `db9e267184c85a26056c2646222f48df609cecd5`. With Zinit 3.17.1 (`0616639`) in temporary homes: a shallow OMZ clone fast-forwards from an older commit; an unreachable remote leaves the checkout unchanged and writes the failure marker; a real `setup_zinit_plugins` run installs all seven plugins and removes old `OMZP::*` snippets; an interactive zsh loads the deployed `.zshrc` (OMZ aliases and functions present, updater not defined) and completes the daily background update. Unit tests cover the updater's fetch-failure reporting and the derived asset list; they require Zsh and are skipped without it.
 - Official Linux amd64 Herdr 0.8.2 `--version` and `integration status` in a temporary home; output matches the tested status protocol.
 - Official Linux amd64 Yazi 26.9.1, Starship 1.26.0 and pnpm 12.3.4 version probes from temporary extracted binaries.
 - Deployment into a temporary home, parsing all generated TOML with Python's `tomllib`, successful Starship prompt generation, and TTF revision detection returning 2.304.
 
-**Not validated here:** full apt/Snap/Homebrew provisioning (fresh or existing desktop), macOS arm64/Bash 3.2, Linux arm64 binaries, actual GUI rendering in Ghostty/cmux, font appearance, Zinit interactive plugin loading, real harness lifecycle/resume hooks, TermRover devices and remote reconnect. An attempted headless Yazi PTY launch did not complete reliably; Yazi's interactive Git/Starship rendering remains a manual check. No GUI/profile is claimed manually verified by the unit tests.
+**Not validated here:** full apt/Snap/Homebrew provisioning (fresh or existing desktop), macOS arm64/Bash 3.2, Linux arm64 binaries, actual GUI rendering in Ghostty/cmux, font appearance, Zinit plugin loading on macOS, real harness lifecycle/resume hooks, TermRover devices and remote reconnect. An attempted headless Yazi PTY launch did not complete reliably; Yazi's interactive Git/Starship rendering remains a manual check. No GUI/profile is claimed manually verified by the unit tests.
 
 Before release, run both fresh provisioning and an existing-environment upgrade on Linux amd64, Linux arm64 and macOS arm64. Confirm `zinit list`, `ya pkg list`, Yazi Git/Starship rendering, the terminal's config/fonts, a selected official Herdr integration, detach/reattach and TermRover reconnect. Keep these platform checks pending until actually performed.

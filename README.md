@@ -83,6 +83,7 @@ in the `.local` files. Run `exec zsh` to reload the shell.
 
 Zinit plugins update in the background once per day. To update manually, run
 `zinit self-update` and `zinit update --all`; use `ya pkg upgrade` for Yazi plugins.
+Managed plugins are Git clones, so a failed update keeps the installed version.
 
 ## Check or troubleshoot
 

@@ -628,7 +628,7 @@ version_inventory() {
     local asset path revision
     while IFS='|' read -r asset path; do
         revision=$(git -C "$path" rev-parse --short HEAD 2>/dev/null || true)
-        printf '  %s: %s\n' "$asset" "${revision:-snippet/unavailable}"
+        printf '  %s: %s\n' "$asset" "${revision:-unavailable}"
     done < <(zinit_expected_assets)
     if [[ -f "$HOME/.local/share/zinit/zinit.git/VERSION" ]]; then
         printf '  Zinit: %s\n' "$(cat "$HOME/.local/share/zinit/zinit.git/VERSION")"
@@ -1091,26 +1091,22 @@ install_fonts() {
     fi
 }
 
+# The managed plugin list lives in the deployed ~/.zsh/zinit-update.zsh.
 zinit_expected_assets() {
-    printf '%s|%s\n' \
-        "zinit plugin zsh-autosuggestions" "$HOME/.local/share/zinit/plugins/zsh-users---zsh-autosuggestions" \
-        "zinit plugin zsh-syntax-highlighting" "$HOME/.local/share/zinit/plugins/zsh-users---zsh-syntax-highlighting" \
-        "zinit plugin zsh-history-substring-search" "$HOME/.local/share/zinit/plugins/zsh-users---zsh-history-substring-search" \
-        "zinit plugin omz-plugin-pnpm" "$HOME/.local/share/zinit/plugins/ntnyq---omz-plugin-pnpm" \
-        "zinit plugin omz-plugin-bun" "$HOME/.local/share/zinit/plugins/ntnyq---omz-plugin-bun" \
-        "zinit plugin zsh-you-should-use" "$HOME/.local/share/zinit/plugins/MichaelAquilina---zsh-you-should-use" \
-        "zinit snippet OMZP::git" "$HOME/.local/share/zinit/snippets/OMZP::git" \
-        "zinit snippet OMZP::bun" "$HOME/.local/share/zinit/snippets/OMZP::bun" \
-        "zinit snippet OMZP::alias-finder" "$HOME/.local/share/zinit/snippets/OMZP::alias-finder"
-
-    if [[ "$OS_TYPE" == "darwin" ]]; then
-        printf '%s|%s\n' \
-            "zinit snippet OMZP::command-not-found" "$HOME/.local/share/zinit/snippets/OMZP::command-not-found"
-    fi
+    local helper="$HOME/.zsh/zinit-update.zsh" plugin
+    [[ -r "$helper" ]] && command_exists zsh || return 0
+    while IFS= read -r plugin; do
+        printf 'zinit plugin %s|%s\n' "${plugin#*/}" "$HOME/.local/share/zinit/plugins/${plugin//\//---}"
+    done < <(zsh -fc 'source "$1" && print -rl -- $shell_backup_zinit_plugins' zsh "$helper")
 }
 
 verify_zinit_assets() {
     local name path missing=0
+
+    if [[ ! -r "$HOME/.zsh/zinit-update.zsh" ]]; then
+        warning "Zinit plugin list missing at $HOME/.zsh/zinit-update.zsh"
+        return 1
+    fi
 
     while IFS='|' read -r name path; do
         [[ -n "$name" ]] || continue
@@ -1217,10 +1213,47 @@ ZSHENV_EOF
     success ".zshenv deployed"
 }
 
+deploy_zinit_updater() {
+    mkdir -p "$HOME/.zsh"
+    backup_file "$HOME/.zsh/zinit-update.zsh"
+    cat > "$HOME/.zsh/zinit-update.zsh" << 'ZINIT_UPDATE_EOF'
+# Zinit plugins managed by shell-backup; updates touch only these.
+# Keep every entry a Git plugin: `git pull --ff-only` leaves installed files
+# intact on failure, while Zinit's URL-snippet updater deletes the snippet.
+shell_backup_zinit_plugins=(
+    zsh-users/zsh-autosuggestions
+    zsh-users/zsh-syntax-highlighting
+    zsh-users/zsh-history-substring-search
+    ohmyzsh/ohmyzsh
+    ntnyq/omz-plugin-pnpm
+    ntnyq/omz-plugin-bun
+    MichaelAquilina/zsh-you-should-use
+)
+
+shell_backup_update_zinit() {
+    emulate -L zsh
+    local plugin failed=0
+    zinit self-update -q || return 1
+    for plugin in $shell_backup_zinit_plugins; do
+        # `zinit update` succeeds even when its fetch fails; fetch first so
+        # network and remote errors are reported.
+        if ! command git -C "${ZINIT[PLUGINS_DIR]}/${plugin//\//---}" fetch --quiet origin; then
+            failed=1
+            continue
+        fi
+        zinit update -q "$plugin" || failed=1
+    done
+    return "$failed"
+}
+ZINIT_UPDATE_EOF
+    chmod 600 "$HOME/.zsh/zinit-update.zsh"
+}
+
 deploy_zshrc() {
     log "Deploying .zshrc configuration..."
 
     backup_file "$HOME/.zshrc"
+    deploy_zinit_updater
 
     # Set platform-specific paths
     local pnpm_home
@@ -1335,16 +1368,12 @@ node-docs() {
     fi
 }
 
-# Command not found helper - suggests packages for missing commands
-if [[ "$(uname -s)" == "Darwin" ]]; then
-    zinit snippet OMZP::command-not-found
-else
-    # Linux: Use system command-not-found
-    if [[ -f /usr/lib/command-not-found ]]; then
-        command_not_found_handler() {
-            /usr/lib/command-not-found -- "$1" || return 127
-        }
-    fi
+# Command not found helper - suggests packages for missing commands.
+# macOS uses the OMZ command-not-found plugin loaded below.
+if [[ "$(uname -s)" != "Darwin" && -f /usr/lib/command-not-found ]]; then
+    command_not_found_handler() {
+        /usr/lib/command-not-found -- "$1" || return 127
+    }
 fi
 
 # ============================================================================
@@ -1380,17 +1409,17 @@ for keymap in emacs viins vicmd; do
     bindkey -M "$keymap" '^[OB' history-substring-search-down
 done
 
-# Optional OMZ helpers.
+# Optional OMZ plugins from a shallow clone of the official repository.
 # `wait` keeps startup fast, `silent` suppresses normal output, and `notify""`
-# only surfaces a message if the snippet fails to load.
-for snippet in \
-    OMZP::git \
-    OMZP::bun \
-    OMZP::alias-finder
-do
-    zinit ice wait lucid silent notify""
-    zinit snippet "$snippet"
-done
+# only surfaces a message if a plugin fails to load. `pick"/dev/null"` skips the
+# OMZ framework and `nocompletions` skips completions for unused plugins.
+omz_plugin_files="plugins/git/git.plugin.zsh plugins/bun/bun.plugin.zsh plugins/alias-finder/alias-finder.plugin.zsh"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    omz_plugin_files+=" plugins/command-not-found/command-not-found.plugin.zsh"
+fi
+zinit ice wait lucid silent notify"" depth"1" pick"/dev/null" nocompletions multisrc"$omz_plugin_files"
+zinit light ohmyzsh/ohmyzsh
+unset omz_plugin_files
 
 # You Should Use - reminds you of existing aliases
 # pnpm support - aliases and completions (lazy loaded)
@@ -1466,22 +1495,12 @@ export PATH="$HOME/.local/bin:$PATH"
 # Auto-update Zinit plugins (once per day)
 # ============================================================================
 
-shell_backup_update_zinit() {
-    local plugin failed=0
-    zinit self-update -q || return 1
-    for plugin in zsh-users/zsh-autosuggestions zsh-users/zsh-syntax-highlighting zsh-users/zsh-history-substring-search ntnyq/omz-plugin-pnpm ntnyq/omz-plugin-bun MichaelAquilina/zsh-you-should-use OMZP::git OMZP::bun OMZP::alias-finder; do
-        zinit update -q "$plugin" || failed=1
-    done
-    if [[ "$(uname -s)" == Darwin ]]; then
-        zinit update -q OMZP::command-not-found || failed=1
-    fi
-    return "$failed"
-}
-
 # Check for updates once per day using a timestamp file.
 # The installer sets SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE=1 to avoid racing a
-# background update while it is still provisioning plugins.
-if [[ -z "${SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE:-}" ]] && command -v zinit >/dev/null 2>&1; then
+# background update while it is still provisioning plugins. The updater is
+# only sourced by the background job, keeping it out of shell startup.
+if [[ -z "${SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE:-}" && -r "$HOME/.zsh/zinit-update.zsh" ]] &&
+    command -v zinit >/dev/null 2>&1; then
     zinit_update_dir="$HOME/.cache/shell-backup"
     zinit_update_stamp="$HOME/.zinit-last-update"
     zinit_update_lock="$zinit_update_dir/zinit-update.lock"
@@ -1534,7 +1553,7 @@ if [[ -z "${SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE:-}" ]] && command -v zinit >/dev
             (
                 {
                     print "[$(date)] Starting Zinit update"
-                    if shell_backup_update_zinit; then
+                    if source "$HOME/.zsh/zinit-update.zsh" && shell_backup_update_zinit; then
                         print "[$(date)] Zinit update completed"
                         command rm -f "$zinit_update_failed" 2>/dev/null || true
                     else
@@ -2262,31 +2281,22 @@ setup_zinit_plugins() {
         source "$HOME/.local/share/zinit/zinit.git/zinit.zsh"
         mkdir -p "${ZSH_CACHE_DIR:-$HOME/.cache/zsh}/completions"
 
-        zinit light zsh-users/zsh-autosuggestions
-        zinit light zsh-users/zsh-syntax-highlighting
-        zinit light zsh-users/zsh-history-substring-search
-
-        for snippet in OMZP::git OMZP::bun OMZP::alias-finder; do
-            zinit ice silent
-            zinit snippet "$snippet" >/dev/null
-        done
-
-        if [[ "$(uname -s)" == "Darwin" ]]; then
-            zinit ice silent
-            zinit snippet OMZP::command-not-found >/dev/null
-        fi
-
-        for plugin in ntnyq/omz-plugin-pnpm ntnyq/omz-plugin-bun MichaelAquilina/zsh-you-should-use; do
-            zinit ice silent light-mode
+        source "$HOME/.zsh/zinit-update.zsh" || exit 1
+        for plugin in $shell_backup_zinit_plugins; do
+            if [[ "$plugin" == ohmyzsh/ohmyzsh ]]; then
+                # Same clone ices as ~/.zshrc; never source the OMZ framework.
+                zinit ice silent depth"1" pick"/dev/null" nocompletions
+            else
+                zinit ice silent light-mode
+            fi
             zinit light "$plugin" >/dev/null
         done
+        shell_backup_update_zinit || exit 1
 
-        zinit self-update -q || exit 1
-        for plugin in zsh-users/zsh-autosuggestions zsh-users/zsh-syntax-highlighting zsh-users/zsh-history-substring-search ntnyq/omz-plugin-pnpm ntnyq/omz-plugin-bun MichaelAquilina/zsh-you-should-use OMZP::git OMZP::bun OMZP::alias-finder; do
-            zinit update -q "$plugin" || exit 1
-        done
-        if [[ "$(uname -s)" == Darwin ]]; then
-            zinit update -q OMZP::command-not-found || exit 1
+        # Earlier versions loaded OMZ plugins as URL snippets. Remove them once
+        # the Git clone exists, so `zinit update --all` never downloads them.
+        if [[ -f "${ZINIT[PLUGINS_DIR]}/ohmyzsh---ohmyzsh/plugins/git/git.plugin.zsh" ]]; then
+            command rm -rf -- "${ZINIT[SNIPPETS_DIR]}"/OMZP::{git,bun,alias-finder,command-not-found}
         fi
         exit 0
     '; then
@@ -2439,6 +2449,7 @@ verify_installation() {
     check_path "Zinit" "$HOME/.local/share/zinit/zinit.git"
     check_path ".zshenv" "$HOME/.zshenv"
     check_path ".zshrc" "$HOME/.zshrc"
+    check_path "Zinit plugin list" "$HOME/.zsh/zinit-update.zsh"
     check_path "Yazi init.lua" "$HOME/.config/yazi/init.lua"
     check_path "Yazi yazi.toml" "$HOME/.config/yazi/yazi.toml"
     check_path "Yazi theme.toml" "$HOME/.config/yazi/theme.toml"

@@ -369,6 +369,39 @@ git branch feature/issue-456
                         os.waitpid(pid, 0)
                     os.close(master)
 
+    @unittest.skipUnless(shutil.which('zsh'), 'zsh is required for updater checks')
+    def test_managed_updates_use_git_plugins_and_report_fetch_failures(self):
+        self.run_shell('deploy_zshrc')
+        for name in ('.zshrc', '.zsh/zinit-update.zsh'):
+            result = subprocess.run(['zsh', '-n', str(self.home / name)], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('zinit snippet', (self.home / '.zshrc').read_text())
+        self.executable('git', r'''#!/bin/bash
+echo "git $*" >> "$CALLS"
+[[ "$2" != */ohmyzsh---ohmyzsh ]]
+''')
+        result = subprocess.run(['zsh', '-f', '-c', '''
+typeset -A ZINIT
+ZINIT[PLUGINS_DIR]="$HOME/plugins"
+source "$HOME/.zsh/zinit-update.zsh"
+zinit() { print -r -- "zinit $*" >> "$CALLS"; }
+shell_backup_update_zinit
+'''], env=self.env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        calls = self.calls()
+        self.assertIn(f'git -C {self.home}/plugins/ohmyzsh---ohmyzsh fetch --quiet origin', calls)
+        self.assertNotIn('zinit update -q ohmyzsh/ohmyzsh', calls)
+        self.assertIn('zinit update -q zsh-users/zsh-autosuggestions', calls)
+        self.assertIn('zinit update -q MichaelAquilina/zsh-you-should-use', calls)
+
+    @unittest.skipUnless(shutil.which('zsh'), 'zsh is required to read the plugin list')
+    def test_zinit_assets_follow_managed_plugin_list(self):
+        output = self.run_shell('deploy_zinit_updater; zinit_expected_assets')
+        self.assertIn(f'zinit plugin ohmyzsh|{self.home}/.local/share/zinit/plugins/ohmyzsh---ohmyzsh', output)
+        self.assertEqual(len(output.splitlines()), 7)
+        self.assertNotIn('snippets', output)
+        self.run_shell('rm "$HOME/.zsh/zinit-update.zsh"; ! verify_zinit_assets')
+
     def test_macos_old_os_blocks_native_terminal(self):
         output = self.run_shell("""OS_TYPE=darwin
 sw_vers() { echo 13.7; }
