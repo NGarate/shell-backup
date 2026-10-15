@@ -45,7 +45,10 @@ and `personal`). User, port and key are configured only in `~/.ssh/config`.
 `TRANSPORTE=auto` tries Mosh when available, then SSH if it fails;
 `TRANSPORTE=ssh` uses SSH directly. Detaching normally or cancelling Mosh does
 not open a new connection. The shortcut loads remote Bash's login environment
-and includes `~/.local/bin` and `/opt/homebrew/bin` when finding Herdr.
+and includes `~/.local/bin` and `/opt/homebrew/bin` when finding Herdr. On hosts
+provisioned by the current `setup.sh` it runs `shell-backup-attach`, which also
+repairs the locale and an unknown `TERM`; older hosts get `herdr session attach`
+directly.
 
 Add the Termux:Widget widget to the Android home screen, refresh it and tap
 **Herdr**. To diagnose a failure, run `bash ~/.shortcuts/Herdr` in Termux.
@@ -106,6 +109,22 @@ If `[keys]` exists, edit its `prefix` without duplicating the section. Reload
 Herdr's configuration or reattach. In pickers, use the keyboard's ordinary
 arrows (or swipe up on the Panel buttons), Enter and Esc.
 
-For missing glyphs, put your chosen Nerd Font TTF at `~/.termux/font.ttf` and run
-`termux-reload-settings`. Touch gestures, rendering and real remote reconnects
+Termux renders with one font file, so it needs a Nerd Font of its own for the
+prompt, Yazi and Herdr icons. A single-width Mono variant suits the terminal grid.
+`setup.sh` already placed one on the computer:
+
+```bash
+mkdir -p ~/.termux
+scp laptop:.local/share/fonts/shell-backup/jetbrains-nerd/JetBrainsMonoNerdFontMono-Regular.ttf ~/.termux/font.ttf
+termux-reload-settings
+```
+
+Iosevka Term SS05 itself lacks the Material Design icons (U+F0000 and above), so
+copying it would leave some prompt icons as boxes. For an Iosevka look, take
+`IosevkaTermNerdFontMono-Regular.ttf` from the official Nerd Fonts
+[IosevkaTerm archive](https://github.com/ryanoasis/nerd-fonts/releases/tag/v3.5.1)
+(92 MB `.tar.xz`), without the SS05 style. Claude Code's ⏺ ⎿ ⏵ symbols are
+missing from the JetBrains font, and Android normally draws them with its
+system fonts. If icons still show as boxes, use the plain prompt described in
+the README. Touch gestures, rendering and real remote reconnects
 still need validation on Android; the repository tests mock the connection.

@@ -70,6 +70,18 @@ sys.exit(int(os.environ['MOCK_' + name.upper() + '_STATUS']))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines(), ['truecolor', 'session', 'attach', 'work-2.dev'])
 
+    def test_remote_script_prefers_attach_helper(self):
+        self.env['MOCK_MOSH_STATUS'] = '0'
+        calls = self.run_shortcut()
+        remote_script = calls[0][1][-1]
+        helper = self.bin / 'shell-backup-attach'
+        helper.write_text('#!/bin/sh\nprintf "helper %s\\n" "$@"\n')
+        helper.chmod(0o700)
+        result = subprocess.run(['/bin/bash', '-c', remote_script], env=self.env,
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ['helper personal'])
+
     def test_ssh_only_respects_alias_and_exit_status(self):
         self.env.update(TRANSPORTE='ssh', MOCK_SSH_STATUS='255')
         calls = self.run_shortcut(255)

@@ -13,6 +13,9 @@ TRANSPORTE="${TRANSPORTE:-auto}" # auto: Mosh con respaldo SSH; ssh: solo SSH
 }
 export TERM="${TERM:-xterm-256color}" COLORTERM=truecolor
 remote_script='export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH" COLORTERM=truecolor; '
+# shell-backup-attach (instalado por setup.sh) corrige locale y TERM; los
+# equipos configurados antes usan herdr directamente.
+remote_script+="if command -v shell-backup-attach >/dev/null 2>&1; then exec shell-backup-attach $SESION; fi; "
 remote_script+="exec herdr session attach $SESION"
 
 printf 'Herdr: %s -> %s (desconectar: Ctrl+Espacio, q)\n' "$HOST" "$SESION"

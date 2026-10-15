@@ -12,6 +12,8 @@ import signal
 import tarfile
 import hashlib
 import shutil
+import zipfile
+import xml.etree.ElementTree as ElementTree
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'setup.sh'
 
@@ -231,12 +233,15 @@ setup_herdr
         self.assertIn('Herdr: failed', output)
 
     def test_macos_optional_and_existing(self):
-        output = self.run_shell('''OS_TYPE=darwin; NON_INTERACTIVE=true
+        # Even with a terminal that would answer yes, macOS never asks.
+        output = self.run_shell('''OS_TYPE=darwin
+can_prompt() { return 0; }
+read_tty() { exit 98; }
 find_herdr() { return 1; }
 install_release_tool() { exit 98; }
 setup_herdr
 ''')
-        self.assertIn('Herdr: skipped', output)
+        self.assertIn('Herdr: skipped — optional macOS component; pass --with-herdr', output)
         self.run_shell('OS_TYPE=darwin; NON_INTERACTIVE=true\nsetup_herdr\n[[ "$HERDR_READY" == true ]]')
 
     def test_macos_explicit_opt_in(self):
@@ -314,7 +319,156 @@ retry() {{ cp "$HOME/archive.tar.gz" "${{@: -1}}"; }}
         self.assertEqual((config / 'config.local').read_text(), 'font-size = 16\n')
         self.assertIn('source "$HOME/.zshrc.local"', (self.home / '.zshrc').read_text())
         self.assertIn('config-file = ?config.local', (config / 'config').read_text())
-        self.assertTrue(list((self.home / '.backup').iterdir()))
+        # Identical redeployment never creates backups.
+        self.assertFalse((self.home / '.backup').exists())
+
+    # Every stage that runs without network or packages, in main() order.
+    OFFLINE_STAGES = '''
+font_asset() { echo "v1|https://example.invalid/fonts.zip|$FIXTURE_DIGEST|A.ttf"; }
+retry() { cp "$HOME/fonts.zip" "${@: -1}"; }
+NON_INTERACTIVE=true
+resolve_font_choice
+install_fonts
+configure_herdr_prefix
+deploy_attach_helper
+deploy_zshenv
+deploy_zshrc
+deploy_ghostty_config
+deploy_yazi_config
+deploy_starship_config
+deploy_custom_functions
+'''
+
+    def home_state(self):
+        """Path -> (content digest, mode, mtime) for the whole home, except logs."""
+        state = {}
+        for path in sorted(self.home.rglob('*')):
+            relative = path.relative_to(self.home).as_posix()
+            if relative.startswith('.setup.log') or relative in ('calls', 'fonts.zip', 'fc-cache.calls'):
+                continue
+            info = path.lstat()
+            if path.is_symlink():
+                state[relative] = ('link', os.readlink(path))
+            elif path.is_file():
+                state[relative] = (hashlib.sha256(path.read_bytes()).hexdigest(), info.st_mode, info.st_mtime_ns)
+            else:
+                state[relative] = ('dir', info.st_mode)
+        return state
+
+    def run_offline_setup(self):
+        # Mocks are created once so the harness itself does not change the home.
+        if not (self.bin / 'fc-cache').exists():
+            self.executable('fc-cache', '#!/bin/bash\necho run >> "$HOME/fc-cache.calls"\n')
+            self.executable('fc-list', '#!/bin/bash\necho Fixture\n')
+        self.run_shell(self.OFFLINE_STAGES)
+
+    def test_rerun_with_same_inputs_changes_nothing(self):
+        self.env['FIXTURE_DIGEST'] = self.font_fixture(['A.ttf'])
+        self.run_offline_setup()
+        first = self.home_state()
+        self.assertIn('.zshrc', first)
+        self.assertIn('.config/fontconfig/conf.d/60-shell-backup.conf', first)
+        self.assertNotIn('.backup', first)
+        self.assertEqual((self.home / 'fc-cache.calls').read_text().splitlines(), ['run'])
+        time.sleep(0.05)  # A rewrite would now produce a different mtime.
+        self.run_offline_setup()
+        self.assertEqual(self.home_state(), first)
+        # No changed font or fontconfig file: the font cache is not rebuilt.
+        self.assertEqual((self.home / 'fc-cache.calls').read_text().splitlines(), ['run'])
+
+    def test_rerun_restores_managed_state_from_any_prior_state(self):
+        self.env['FIXTURE_DIGEST'] = self.font_fixture(['A.ttf'])
+        self.run_offline_setup()
+        expected = {path: value[0] for path, value in self.home_state().items()}
+        zshrc = self.home / '.zshrc'
+        zshrc.write_text('edited by hand\n')
+        (self.home / '.config/starship.toml').chmod(0o600)
+        (self.home / '.local/bin/shell-backup-attach').unlink()
+        self.run_offline_setup()
+        # Content matches a clean run again; only the edited file was backed up.
+        actual = {path: value[0] for path, value in self.home_state().items() if not path.startswith('.backup')}
+        self.assertEqual(actual, expected)
+        self.assertEqual((self.home / '.config/starship.toml').stat().st_mode & 0o777, 0o644)
+        backups = sorted(p.name for p in (self.home / '.backup').iterdir())
+        self.assertEqual(len(backups), 1)
+        self.assertTrue(backups[0].startswith('.zshrc.backup.'))
+        self.assertEqual((self.home / '.backup' / backups[0]).read_text(), 'edited by hand\n')
+
+    def test_deploy_file_writes_through_symlinks(self):
+        real = self.home / 'dotfiles/zshenv'
+        real.parent.mkdir()
+        real.write_text('old\n')
+        (self.home / '.zshenv').symlink_to(real)
+        self.run_shell('deploy_zshenv')
+        self.assertTrue((self.home / '.zshenv').is_symlink())
+        self.assertIn('load_env_files', real.read_text())
+        self.assertEqual(len(list((self.home / '.backup').iterdir())), 1)
+
+    def test_tool_edited_files_are_backed_up_only_when_changed(self):
+        package = self.home / '.config/yazi/package.toml'
+        package.parent.mkdir(parents=True)
+        package.write_text('[plugin]\ndeps = [{ use = "yazi-rs/plugins:git" }, { use = "Rolv-Apneseth/starship" }]\n')
+        self.run_shell('''snapshot=$(snapshot_file "$HOME/.config/yazi/package.toml")
+keep_snapshot_if_changed "$HOME/.config/yazi/package.toml" "$snapshot"
+[[ ! -e "$snapshot" ]]
+snapshot=$(snapshot_file "$HOME/.config/yazi/package.toml")
+echo '# upgraded' >> "$HOME/.config/yazi/package.toml"
+keep_snapshot_if_changed "$HOME/.config/yazi/package.toml" "$snapshot"
+keep_snapshot_if_changed "$HOME/.config/yazi/missing.toml" ""
+''')
+        backups = list((self.home / '.backup').iterdir())
+        self.assertEqual(len(backups), 1)
+        self.assertNotIn('# upgraded', backups[0].read_text())
+        # The mock Herdr installer leaves settings.json unchanged: no backup.
+        (self.home / '.claude/settings.json').write_text('{}\n')
+        self.choose('4')
+        self.assertEqual(self.calls(), ['claude'])
+        self.assertEqual(len(list((self.home / '.backup').iterdir())), 1)
+
+    def test_yazi_upgrades_only_moved_missing_or_unrecorded_packages(self):
+        plugins = self.home / '.config/yazi/plugins'
+        for name in ('git.yazi', 'starship.yazi'):
+            (plugins / name).mkdir(parents=True)
+            (plugins / name / 'main.lua').write_text('-- fixture\n')
+        package = self.home / '.config/yazi/package.toml'
+        package.write_text('''[[plugin.deps]]
+use = "yazi-rs/plugins:git"
+rev = "6cf1f43"
+hash = "aaaa"
+
+[[plugin.deps]]
+use = "Rolv-Apneseth/starship"
+rev = "ea92cf4"
+hash = "bbbb"
+''')
+        # ls-remote reports both upstream HEADs at the recorded revisions.
+        self.executable('git', '#!/bin/bash\ncase "$2" in\n'
+                        '  */yazi-rs/plugins) printf "6cf1f4389b4d\\tHEAD\\n" ;;\n'
+                        '  */starship.yazi) printf "ea92cf493804\\tHEAD\\n" ;;\nesac\n')
+        upgrade = 'yazi_packages_to_upgrade "$HOME/.config/yazi/package.toml"'
+        self.assertEqual(self.run_shell(upgrade), '')
+        package.write_text(package.read_text().replace('ea92cf4', '1111111'))
+        self.assertEqual(self.run_shell(upgrade), 'Rolv-Apneseth/starship\n')
+        # A user pin is kept even when upstream moved; missing files force a repair.
+        package.write_text(package.read_text().replace('"1111111"', '"=1111111"'))
+        (plugins / 'git.yazi/main.lua').unlink()
+        self.assertEqual(self.run_shell(upgrade), 'yazi-rs/plugins:git\n')
+        # Unknown upstream state (offline) falls back to asking ya.
+        self.executable('git', '#!/bin/bash\nexit 128\n')
+        (plugins / 'git.yazi/main.lua').write_text('-- fixture\n')
+        self.assertEqual(self.run_shell(upgrade), 'yazi-rs/plugins:git\n')
+
+    def test_default_shell_uses_account_login_shell(self):
+        self.executable('getent', '#!/bin/bash\necho "user:x:1000:1000::/home/user:/usr/bin/zsh"\n')
+        self.executable('chsh', '#!/bin/bash\necho chsh >> "$CALLS"\nexit 1\n')
+        # $SHELL still names bash until the next login; no prompt, no chsh.
+        output = self.run_shell('SHELL=/bin/bash; NON_INTERACTIVE=true; setup_shell')
+        self.assertIn('already the default shell', output)
+        self.assertEqual(self.calls(), [])
+        # A failing account lookup falls back to $SHELL instead of aborting.
+        self.executable('getent', '#!/bin/bash\nexit 2\n')
+        self.assertIn('already the default shell', self.run_shell('SHELL=/usr/bin/zsh; set -e; setup_shell'))
+        self.assertIn('chsh -s', self.run_shell('SHELL=/bin/bash; NON_INTERACTIVE=true; set -e; setup_shell || [[ $? == 3 ]]'))
 
     @unittest.skipUnless(shutil.which('zsh') and shutil.which('fzf'),
                          'zsh and fzf are required for branch selection checks')
@@ -393,12 +547,25 @@ shell_backup_update_zinit
         self.assertNotIn('zinit update -q ohmyzsh/ohmyzsh', calls)
         self.assertIn('zinit update -q zsh-users/zsh-autosuggestions', calls)
         self.assertIn('zinit update -q MichaelAquilina/zsh-you-should-use', calls)
+        # A checkout already at its upstream needs no `zinit update`.
+        self.executable('git', '#!/bin/bash\necho "git $*" >> "$CALLS"\n[[ "$3" != rev-parse ]] || echo 0123abc\n')
+        (self.home / 'calls').unlink()
+        result = subprocess.run(['zsh', '-f', '-c', '''
+typeset -A ZINIT
+ZINIT[PLUGINS_DIR]="$HOME/plugins"
+source "$HOME/.zsh/zinit-update.zsh"
+zinit() { print -r -- "zinit $*" >> "$CALLS"; }
+shell_backup_update_zinit
+'''], env=self.env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([call for call in self.calls() if call.startswith('zinit')], ['zinit self-update -q'])
 
     @unittest.skipUnless(shutil.which('zsh'), 'zsh is required to read the plugin list')
     def test_zinit_assets_follow_managed_plugin_list(self):
         output = self.run_shell('deploy_zinit_updater; zinit_expected_assets')
         self.assertIn(f'zinit plugin ohmyzsh|{self.home}/.local/share/zinit/plugins/ohmyzsh---ohmyzsh', output)
-        self.assertEqual(len(output.splitlines()), 7)
+        self.assertIn(f'zinit plugin zsh-completions|{self.home}/.local/share/zinit/plugins/zsh-users---zsh-completions', output)
+        self.assertEqual(len(output.splitlines()), 8)
         self.assertNotIn('snippets', output)
         self.run_shell('rm "$HOME/.zsh/zinit-update.zsh"; ! verify_zinit_assets')
 
@@ -428,6 +595,128 @@ print_summary
 """)
         self.assertIn('finished with failures', output)
         self.assertNotIn('SETUP COMPLETE', output)
+
+    def test_font_flag_saved_profile_and_default(self):
+        self.run_shell('parse_args --font=jetbrains; NON_INTERACTIVE=true; resolve_font_choice; [[ "$FONT_CHOICE" == jetbrains ]]')
+        profile = self.home / '.config/shell-backup/profile'
+        self.assertEqual(profile.read_text(), 'FONT=jetbrains\n')
+        # Later --ci runs keep the saved choice; an explicit flag replaces it.
+        self.run_shell('parse_args --ci; resolve_font_choice; [[ "$FONT_CHOICE" == jetbrains ]]')
+        self.run_shell('parse_args --ci --font=iosevka; resolve_font_choice; [[ "$FONT_CHOICE" == iosevka ]]')
+        self.assertEqual(profile.read_text(), 'FONT=iosevka\n')
+        profile.unlink()
+        self.run_shell('can_prompt() { return 0; }\nread_tty() { echo 2; }\nresolve_font_choice\n[[ "$FONT_CHOICE" == jetbrains ]]')
+        profile.unlink()
+        self.run_shell('NON_INTERACTIVE=true; resolve_font_choice; [[ "$FONT_CHOICE" == iosevka ]]')
+        result = subprocess.run(['bash', '-c', self.base + 'parse_args --font=comic'], env=self.env,
+                                text=True, capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Unknown font: comic', result.stdout + result.stderr)
+
+    def test_terminal_config_uses_font_fallback_and_ssh_terminfo(self):
+        config = self.home / '.config/ghostty/config'
+        self.run_shell('deploy_ghostty_config')
+        text = config.read_text()
+        self.assertIn('font-family = Iosevka Term SS05\nfont-family = Symbols Nerd Font Mono\n', text)
+        self.assertIn('font-feature = +calt', text)
+        self.assertIn('shell-integration-features = ssh-terminfo,ssh-env', text)
+        self.run_shell('FONT_CHOICE=jetbrains; deploy_ghostty_config')
+        self.assertIn('font-family = JetBrainsMono Nerd Font\n', config.read_text())
+
+    def font_fixture(self, names):
+        archive = self.home / 'fonts.zip'
+        with zipfile.ZipFile(archive, 'w') as bundle:
+            for name in names:
+                bundle.writestr('nested/' + name, 'font ' + name)
+        return hashlib.sha256(archive.read_bytes()).hexdigest()
+
+    def test_font_archive_checksum_marker_and_retention(self):
+        digest = self.font_fixture(['A.ttf', 'B.ttf'])
+        manifest = f"font_asset() {{ echo 'v1|https://example.invalid/fonts.zip|{digest}|A.ttf B.ttf'; }}\n"
+        fetch = 'retry() { cp "$HOME/fonts.zip" "${@: -1}"; }\n'
+        self.run_shell(manifest + fetch + 'install_font_archive fixture\nfont_installed fixture')
+        installed = self.home / '.local/share/fonts/shell-backup/fixture'
+        self.assertEqual(sorted(p.name for p in installed.iterdir()), ['A.ttf', 'B.ttf'])
+        self.assertEqual((self.home / '.local/share/shell-backup/fonts/fixture.version').read_text(), f'v1 {digest}\n')
+        # A matching marker keeps the font without downloading.
+        output = self.run_shell(manifest + 'retry() { exit 98; }\ninstall_font_archive fixture')
+        self.assertIn('retained (v1)', output)
+        # A new pinned release with a bad download leaves installed files alone.
+        bad = manifest.replace(digest, 'a' * 64).replace('v1|', 'v2|')
+        self.run_shell(bad + fetch + '! install_font_archive fixture\n! font_installed fixture')
+        self.assertEqual((installed / 'A.ttf').read_text(), 'font A.ttf')
+        # An archive lacking a listed file fails before replacing anything.
+        digest = self.font_fixture(['A.ttf'])
+        partial = f"font_asset() {{ echo 'v3|https://example.invalid/fonts.zip|{digest}|A.ttf B.ttf'; }}\n"
+        output = self.run_shell(partial + fetch + '! install_font_archive fixture')
+        self.assertIn('B.ttf missing', output)
+        self.assertEqual((installed / 'A.ttf').read_text(), 'font A.ttf')
+
+    def test_font_manifest_coverage(self):
+        self.run_shell(r'''for id in $FONT_IDS; do
+ asset=$(font_asset "$id")
+ [[ "$asset" =~ ^v[0-9.]+\|https://github.com/[^|]+\.(zip|tar\.xz)\|[0-9a-f]{64}\|[^|]+\.ttf$ ]]
+done
+! font_asset unknown
+''')
+
+    def test_fontconfig_fallback_generated_and_backed_up(self):
+        self.run_shell('deploy_fontconfig; FONT_CHOICE=jetbrains; deploy_fontconfig')
+        conf = self.home / '.config/fontconfig/conf.d/60-shell-backup.conf'
+        root = ElementTree.fromstring(conf.read_text())
+        aliases = {alias.findtext('family'): alias for alias in root.findall('alias')}
+        prefer = [family.text for family in aliases['monospace'].find('prefer')]
+        self.assertEqual(prefer, ['JetBrainsMono Nerd Font', 'Symbols Nerd Font Mono', 'Noto Sans Symbols2', 'Noto Color Emoji'])
+        self.assertEqual(aliases['Iosevka Term SS05'].find('accept')[0].text, 'Symbols Nerd Font Mono')
+        self.assertTrue(list((self.home / '.backup').glob('60-shell-backup.conf.backup.*')))
+
+    def test_glyph_coverage_reports_missing_codepoints(self):
+        self.executable('fc-list', '#!/bin/bash\n[[ "$1" == ":charset=f0349" ]] || echo Fixture\n')
+        output = self.run_shell('report_glyph_coverage')
+        self.assertIn('No installed font covers: U+f0349', output)
+        self.executable('fc-list', '#!/bin/bash\necho Fixture\n')
+        self.assertIn('cover the agent', self.run_shell('report_glyph_coverage'))
+
+    def test_attach_helper_validates_session_and_execs_herdr(self):
+        self.run_shell('deploy_attach_helper')
+        helper = self.bin / 'shell-backup-attach'
+        self.executable('herdr', '#!/bin/bash\nprintf "%s\\n" "$LANG" "$@"\n')
+        env = dict(self.env, LC_ALL='xx_YY.UTF-8', LANG='C')
+        result = subprocess.run([str(helper), 'work-2.dev'], env=env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[1:], ['session', 'attach', 'work-2.dev'])
+        self.assertRegex(lines[0], r'(?i)^(en_US|C)\.UTF-8$')
+        for session in ('--help', 'two words', '$(touch BAD)', 'x;exit'):
+            with self.subTest(session=session):
+                result = subprocess.run([str(helper), session], env=self.env, text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, '')
+
+    def test_zshrc_has_no_forced_locale_or_identity(self):
+        self.run_shell('deploy_zshenv; deploy_zshrc')
+        zshrc = (self.home / '.zshrc').read_text()
+        self.assertNotIn('LC_ALL=', zshrc)
+        self.assertNotIn('GIT_SSH_COMMAND', zshrc)
+        self.assertIn('zinit light zsh-users/zsh-completions', zshrc)
+        self.assertIn('compinit -C', zshrc)
+        self.assertNotIn('$(npm root -g', (self.home / '.zshenv').read_text())
+
+    @unittest.skipUnless(shutil.which('zsh'), 'zsh is required for the locale fallback')
+    def test_zshenv_locale_fallback(self):
+        self.run_shell('deploy_zshenv')
+        def locale_in(**variables):
+            env = {'HOME': str(self.home), 'PATH': '/usr/bin:/bin', **variables}
+            result = subprocess.run(['zsh', '-c', 'print -r -- "${LC_ALL-unset}|${LANG-unset}"'],
+                                    env=env, text=True, capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.strip()
+        # SSH with a forwarded locale this host lacks: drop it, pick UTF-8.
+        lc_all, lang = locale_in(SSH_CONNECTION='1 2 3 4', LC_ALL='xx_YY.UTF-8', LANG='C').split('|')
+        self.assertEqual(lc_all, 'unset')
+        self.assertRegex(lang, r'^(en_US|C)\.UTF-8$')
+        # Scripts outside SSH keep an explicit LC_ALL=C.
+        self.assertEqual(locale_in(LC_ALL='C'), 'C|unset')
 
     def test_release_manifest_coverage(self):
         self.run_shell(r'''for ARCH in amd64 arm64; do

@@ -15,18 +15,42 @@ curl -fsSL https://raw.githubusercontent.com/ngarate/shell-backup/main/setup.sh 
 bash setup.sh
 bash setup.sh --ci             # No optional prompts; also --non-interactive
 bash setup.sh --with-herdr     # Opt into Herdr on macOS
+bash setup.sh --font=jetbrains # Terminal font: iosevka (default) or jetbrains
 ```
 
 | Platform | Terminal | Persistent sessions |
 |---|---|---|
 | Linux | Ghostty | Herdr |
-| macOS arm64 | cmux | Herdr when selected; never started automatically in cmux |
+| macOS arm64 | cmux | None by default; Herdr only with `--with-herdr` (never started automatically in cmux) |
 
 Both profiles install zsh with Zinit, Starship, Yazi with Git/Starship plugins,
-fzf, zoxide, ripgrep, fd, NVM/Node, pnpm and JetBrains Mono.
+fzf, zoxide, ripgrep, fd, NVM/Node, pnpm, mosh-server and the fonts below.
+
+## Fonts and icons
+
+Setup installs both terminal fonts so you can switch without downloading again:
+
+| `--font=` | Family | Notes |
+|---|---|---|
+| `iosevka` (default) | Iosevka Term SS05 | Ligatures on; narrow, so more agent panes fit side by side. Covers Claude Code's ⏺ ⎿ ⏵ ✻ glyphs natively. |
+| `jetbrains` | JetBrainsMono Nerd Font | The previous look with Nerd Font icons included. |
+
+Symbols Nerd Font Mono is installed too and configured as the icon fallback
+for Ghostty/cmux. On Linux, `~/.config/fontconfig/conf.d/60-shell-backup.conf`
+makes other applications fall back the same way: the chosen font, then Nerd
+icons, then Noto Sans Symbols2 and Noto Color Emoji. The first interactive run
+asks which font to use. The choice is saved in `~/.config/shell-backup/profile`,
+and later runs (including `--ci`) reuse it until you pass another `--font`.
+
+Icons are drawn by the terminal you are looking at, not by the host. A remote
+client (TermRover, Termux, another laptop) needs a Nerd Font of its own, or the
+plain prompt described under [Remote clients](#remote-clients).
 
 Reruns update managed tools below target and preserve compatible newer versions.
-Existing configuration is backed up in `~/.backup`; results and versions are
+The same inputs (flags, saved choices, system, and upstream packages/plugins)
+always end in the same state, and a rerun with nothing new changes nothing:
+generated files are only rewritten when their content differs. A replaced or
+tool-modified file is backed up in `~/.backup` only when it actually changed; results and versions are
 logged in `~/.setup.log`. A failed required stage produces a nonzero exit status.
 See [DEPENDENCIES.md](./DEPENDENCIES.md) for versions, checksums and platform limits.
 
@@ -38,7 +62,9 @@ herdr session list
 herdr integration status
 ```
 
-Setup configures the prefix as **Ctrl+Space**. Press it, then `q`, to detach and
+Setup configures the prefix as **Ctrl+Space** and installs
+`~/.local/bin/shell-backup-attach [session]`, the single remote command for every
+client (default session `personal`). Press it, then `q`, to detach and
 leave pane processes running; `?` shows bindings. Reload Herdr's configuration or
 reattach after changing the prefix. `exit` closes the pane's shell.
 
@@ -48,9 +74,33 @@ Harnesses and their initialized configurations must already exist. Existing
 integrations are preserved; unknown or outdated states are reported for review.
 CI and runs without a controlling terminal skip this selector.
 
-For mobile access, prepare SSH separately and reconnect to the same host/session.
-[TERMUX.md](./TERMUX.md) covers the Android widget and touch buttons.
-TermRover is the Android/iPad client described by its [guide](https://termrover.sh/guide).
+## Remote clients
+
+Every client uses the same thing on the host: SSH (or Mosh) and a Herdr session.
+
+```bash
+ssh -t laptop shell-backup-attach personal
+mosh laptop -- shell-backup-attach personal
+```
+
+- **Network:** set up SSH access, and Tailscale if you use it, yourself. Setup
+  never installs Tailscale or changes firewall rules. Mosh also needs UDP
+  60000–61000 reachable from the client.
+- **Host side, done by setup:** `mosh-server`, a working UTF-8 locale (Linux
+  generates `en_US.UTF-8`; `~/.zshenv` repairs a missing or forwarded locale in
+  SSH and interactive shells, falling back to `C.UTF-8`), extra terminfo
+  (`ncurses-term`), and a `TERM=xterm-256color` fallback when the client's
+  terminal type is unknown. Ghostty and cmux clients copy their own terminfo
+  to SSH hosts (`ssh-terminfo`).
+- **TermRover** (Android/iPad, [guide](https://termrover.sh/guide)): add the
+  host, choose Herdr in the session picker or as the host default, and switch
+  to Mosh if you like. Prefix macros expect Ctrl+Space.
+- **Termux:** see [TERMUX.md](./TERMUX.md) for the widget, touch buttons and a
+  Nerd Font for `~/.termux/font.ttf`.
+- **Client without a Nerd Font:** on the host, add
+  `export STARSHIP_CONFIG="$HOME/.config/starship-plain.toml"` to `~/.zshrc.local`.
+  Herdr sessions are shared by every attached client, so this applies per host.
+
 Each computer keeps its own sessions; cmux workspaces remain local to the Mac.
 
 ## Customize
@@ -60,7 +110,8 @@ Each computer keeps its own sessions; cmux workspaces remain local to the Mac.
 | `~/.zshrc.local` | Local aliases and shell preferences; preserved on reruns |
 | `~/.env` | Local environment variables, loaded by generated `~/.zshenv` |
 | `~/.config/ghostty/config.local` | Local rendering overrides for Ghostty/cmux |
-| `~/.config/starship.toml` | Prompt theme |
+| `~/.config/starship.toml` | Prompt theme (Nerd Font); `starship-plain.toml` is the plain-symbol variant |
+| `~/.config/shell-backup/profile` | Saved setup choices (`FONT=iosevka` or `FONT=jetbrains`) |
 | `~/.config/yazi/{init.lua,yazi.toml}` | File manager configuration |
 | `~/.config/herdr/config.toml` | Herdr configuration; setup only changes the prefix |
 
@@ -89,8 +140,11 @@ Managed plugins are Git clones, so a failed update keeps the installed version.
 
 Start with `~/.setup.log`, fix the reported failure and rerun setup. For shell
 plugins, run `exec zsh`, then `zinit list` interactively. Check Yazi with
-`yazi --version` and `ya pkg list`; check the terminal's font setting if glyphs
-look wrong. For widget connection failures, first run `ssh laptop` in Termux.
+`yazi --version` and `ya pkg list`. If glyphs show as boxes, check which
+terminal draws them: the setup summary reports any code points no installed font
+covers (Linux), and remote clients need their own Nerd Font or the plain prompt.
+Run `locale` over SSH if box drawing or Mosh fails. For widget connection
+failures, first run `ssh laptop` in Termux.
 
 Repository checks use temporary homes and mock commands; they do not install software:
 
