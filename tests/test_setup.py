@@ -27,7 +27,8 @@ class SetupTests(unittest.TestCase):
         self.bin.mkdir(parents=True)
         self.env = dict(os.environ, HOME=str(self.home), PATH=f'{self.bin}:/usr/bin:/bin',
                         FIXTURE=str(self.home / 'status'), CALLS=str(self.home / 'calls'))
-        for key in ('HERDR_INSTALL_DIR', 'HERDR_CONFIG_PATH', 'CODEX_HOME', 'HERMES_HOME', 'CLAUDE_CONFIG_DIR'):
+        for key in ('HERDR_INSTALL_DIR', 'HERDR_CONFIG_PATH', 'CODEX_HOME', 'HERMES_HOME', 'CLAUDE_CONFIG_DIR',
+                    'GIT_CONFIG_GLOBAL', 'XDG_CONFIG_HOME', 'NVIM_CONFIG', 'NVIM_APPNAME'):
             self.env.pop(key, None)
         (self.home / 'status').write_text('\n'.join(f'{n}: not installed (/mock/{n})' for n in ('opencode', 'hermes', 'codex', 'claude')) + '\n')
         self.executable('herdr', r'''#!/bin/bash
@@ -337,6 +338,8 @@ deploy_ghostty_config
 deploy_yazi_config
 deploy_starship_config
 deploy_custom_functions
+deploy_neovim_launchers
+configure_git_editor
 '''
 
     def home_state(self):
@@ -367,6 +370,8 @@ deploy_custom_functions
         self.run_offline_setup()
         first = self.home_state()
         self.assertIn('.zshrc', first)
+        self.assertIn('.gitconfig', first)
+        self.assertIn('.local/bin/vi', first)
         self.assertIn('.config/fontconfig/conf.d/60-shell-backup.conf', first)
         self.assertNotIn('.backup', first)
         self.assertEqual((self.home / 'fc-cache.calls').read_text().splitlines(), ['run'])
@@ -720,7 +725,7 @@ done
 
     def test_release_manifest_coverage(self):
         self.run_shell(r'''for ARCH in amd64 arm64; do
- for tool in yazi starship pnpm fzf rg fd zoxide herdr; do
+ for tool in yazi starship pnpm fzf rg fd zoxide herdr nvim lazygit tree-sitter; do
   asset=$(release_asset "$tool" linux "$ARCH")
   [[ "$asset" =~ ^https://github.com/.+\|[0-9a-f]{64}$ ]]
  done
@@ -728,6 +733,184 @@ done
 release_asset herdr darwin arm64 >/dev/null
 ! release_asset herdr darwin amd64
 ''')
+
+    def test_lazygit_version_is_parsed_after_commit_hash(self):
+        self.executable('lazygit', '#!/bin/bash\necho "commit=63ab89f, build date=2026-10-16, build source=binaryRelease, version=0.66.2, os=linux"\n')
+        self.assertEqual(self.run_shell('tool_version lazygit'), '0.66.2\n')
+
+    def nvim_archive(self, version):
+        payload = self.home / 'payload/nvim-linux-x86_64/bin'
+        payload.mkdir(parents=True, exist_ok=True)
+        (payload / 'nvim').write_text(f'#!/bin/bash\necho "NVIM v{version}"\n')
+        (payload / 'nvim').chmod(0o755)
+        archive = self.home / 'nvim.tar.gz'
+        with tarfile.open(archive, 'w:gz') as tar:
+            tar.add(payload.parent, arcname='nvim-linux-x86_64')
+        shutil.rmtree(self.home / 'payload')
+        return hashlib.sha256(archive.read_bytes()).hexdigest()
+
+    def test_neovim_tree_is_versioned_linked_and_retained(self):
+        opt = self.home / '.local/opt'
+        fetch = 'retry() { cp "$HOME/nvim.tar.gz" "${@: -1}"; }\n'
+        # A tree that fails its version check is neither kept nor linked.
+        digest = self.nvim_archive('0.1.0')
+        self.run_shell(f"release_asset() {{ echo 'https://example.invalid/nvim.tar.gz|{digest}'; }}\n" + fetch + '! install_neovim')
+        self.assertEqual(list(opt.iterdir()), [])
+        self.assertFalse((self.bin / 'nvim').exists())
+        digest = self.nvim_archive('0.12.6')
+        manifest = f"release_asset() {{ echo 'https://example.invalid/nvim.tar.gz|{digest}'; }}\n"
+        self.run_shell(manifest + fetch + 'install_neovim')
+        self.assertEqual(os.readlink(opt / 'nvim'), str(opt / 'nvim-0.12.6'))
+        self.assertEqual(os.readlink(self.bin / 'nvim'), str(opt / 'nvim/bin/nvim'))
+        self.assertEqual(sorted(p.name for p in opt.iterdir()), ['nvim', 'nvim-0.12.6'])
+        # Installed: retained without a download. Only unlinked: relinked without one.
+        self.assertIn('nvim retained (0.12.6)', self.run_shell('retry() { exit 98; }\ninstall_neovim'))
+        (self.bin / 'nvim').unlink()
+        self.run_shell(manifest + 'retry() { exit 98; }\ninstall_neovim\n[[ "$(tool_version nvim)" == 0.12.6 ]]')
+
+    def test_vi_launcher_follows_nvim_config(self):
+        self.executable('nvim', '#!/bin/bash\necho "$NVIM_APPNAME $*"\n')
+        self.run_shell('deploy_neovim_launchers')
+        vi = str(self.bin / 'vi')
+        result = subprocess.run([vi, 'a', 'c'], env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.stdout, 'nvim-lazyvim a c\n')
+        result = subprocess.run([vi], env=dict(self.env, NVIM_CONFIG='nvim-kickstart'), text=True, capture_output=True)
+        self.assertEqual(result.stdout, 'nvim-kickstart \n')
+        self.assertIn('source ~/.zsh/nvim.zsh', self.run_shell('deploy_zshrc; cat "$HOME/.zshrc"'))
+        if shutil.which('zsh'):
+            script = 'source "$HOME/.zsh/nvim.zsh"; print -r -- "$NVIM_CONFIG $EDITOR"; alias kv; eval "kv x"'
+            result = subprocess.run(['zsh', '-f', '-c', script], env=dict(self.env, EDITOR='nano'),
+                                    text=True, capture_output=True, timeout=10)
+            self.assertEqual(result.stdout, "nvim-lazyvim nano\nkv='NVIM_CONFIG=nvim-kickstart vi'\nnvim-kickstart x\n",
+                             result.stderr)
+
+    def test_yazi_edit_opener_uses_vi_launcher(self):
+        import tomllib
+        self.run_shell('deploy_yazi_config')
+        config = tomllib.loads((self.home / '.config/yazi/yazi.toml').read_text())
+        edit = config['opener']['edit']
+        self.assertEqual(edit, [{'run': '"$HOME/.local/bin/vi" %s', 'block': True, 'desc': 'Neovim (vi)', 'for': 'unix'}])
+        self.assertEqual([rule['use'] for rule in config['open']['prepend_rules']], [['edit', 'reveal']])
+        self.assertNotIn('dev_open', config['opener'])
+        # A GUI editor adds the directory opener in front of the code rule.
+        self.executable('zed', '#!/bin/bash\nexit 0\n')
+        self.run_shell('deploy_yazi_config')
+        config = tomllib.loads((self.home / '.config/yazi/yazi.toml').read_text())
+        self.assertEqual(config['open']['prepend_rules'][0], {'url': '*/', 'use': 'dev_open'})
+        self.assertEqual(config['opener']['edit'], edit)
+
+    def git_get(self, key):
+        return self.run_shell(f'git config --global --get {key}').strip()
+
+    def test_git_editor_settings_converge_and_back_up_once(self):
+        gitconfig = self.home / '.gitconfig'
+        gitconfig.write_text('[user]\n\tname = Someone\n[merge]\n\ttool = meld\n')
+        self.run_shell('configure_git_editor')
+        self.assertEqual(self.git_get('merge.tool'), 'nvimdiff')
+        self.assertEqual(self.git_get('mergetool.nvimdiff.path'), f'{self.home}/.local/bin/vi')
+        self.assertEqual(self.git_get('core.editor'), f'{self.home}/.local/bin/vi')
+        self.assertEqual(self.git_get('user.name'), 'Someone')
+        self.assertIn(self.git_get('merge.conflictstyle'), ('zdiff3', 'diff3'))
+        backups = list((self.home / '.backup').iterdir())
+        self.assertEqual(len(backups), 1)
+        self.assertIn('tool = meld', backups[0].read_text())
+        mtime = gitconfig.stat().st_mtime_ns
+        time.sleep(0.05)
+        self.assertIn('already uses Neovim', self.run_shell('configure_git_editor'))
+        self.assertEqual(gitconfig.stat().st_mtime_ns, mtime)
+        self.assertEqual(len(list((self.home / '.backup').iterdir())), 1)
+        # Git older than 2.35 cannot read zdiff3.
+        self.executable('git', '#!/bin/bash\n[[ "$1" != --version ]] || { echo "git version 2.30.2"; exit; }\nexec /usr/bin/git "$@"\n')
+        self.run_shell('configure_git_editor')
+        self.assertEqual(self.git_get('merge.conflictstyle'), 'diff3')
+
+    def test_git_editor_uses_xdg_config_when_it_is_the_only_one(self):
+        xdg = self.home / '.config/git/config'
+        xdg.parent.mkdir(parents=True)
+        xdg.write_text('[user]\n\tname = Someone\n')
+        self.run_shell('configure_git_editor')
+        self.assertFalse((self.home / '.gitconfig').exists())
+        self.assertIn('tool = nvimdiff', xdg.read_text())
+        self.assertEqual(len(list((self.home / '.backup').iterdir())), 1)
+
+    def starter_fixtures(self):
+        """Upstream-like repos whose files are the pre-image of each managed patch."""
+        git = ['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'core.hooksPath=/dev/null',
+               '-c', 'init.defaultBranch=main', '-c', 'commit.gpgsign=false']
+        lines = []
+        for name in ('nvim-lazyvim', 'nvim-kickstart'):
+            patch = self.run_shell(f'neovim_starter_patch {name}')
+            repo = self.home / 'fixtures' / name
+            files, current = {}, None
+            for line in patch.splitlines():
+                if line.startswith('+++ b/'):
+                    current = files.setdefault(line[6:], [])
+                elif line.startswith('@@'):
+                    current.append('-- unrelated upstream line')
+                elif current is not None and not line.startswith(('---', '+', 'diff ')):
+                    current.append(line[1:])
+            files.setdefault('init.lua', ['-- fixture'])
+            for path, content in files.items():
+                (repo / path).parent.mkdir(parents=True, exist_ok=True)
+                (repo / path).write_text('\n'.join(content) + '\n')
+            subprocess.run(git + ['init', '-q', str(repo)], check=True)
+            subprocess.run(git + ['-C', str(repo), 'add', '-A'], check=True)
+            subprocess.run(git + ['-C', str(repo), 'commit', '-qm', 'upstream'], check=True)
+            subprocess.run(git + ['-C', str(repo), 'commit', '-qm', 'newer upstream', '--allow-empty'], check=True)
+            commit = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD~1'], check=True, text=True,
+                                    capture_output=True).stdout.strip()
+            lines.append(f'{name}|{repo}|{commit}')
+        return 'neovim_starters() { printf "%s\\n" ' + ' '.join(shlex.quote(line) for line in lines) + '; }\n'
+
+    def config_state(self):
+        return {path: value for path, value in self.home_state().items() if path.startswith('.config/')}
+
+    def test_neovim_starters_cloned_at_commit_patched_and_converge(self):
+        starters = self.starter_fixtures()
+        output = self.run_shell(starters + 'setup_neovim_configs')
+        self.assertIn('nvim-lazyvim managed edits applied', output)
+        lazyvim, kickstart = self.home / '.config/nvim-lazyvim', self.home / '.config/nvim-kickstart'
+        self.assertIn('lazyvim.plugins.extras.lang.python', (lazyvim / 'lua/config/lazy.lua').read_text())
+        self.assertIn('vim.g.have_nerd_font = true', (kickstart / 'init.lua').read_text())
+        self.assertIn("require 'custom.plugins'", (kickstart / 'init.lua').read_text())
+        for path in ('lua/plugins/git.lua', 'lua/plugins/bash.lua', 'lua/plugins/learning.lua'):
+            self.assertTrue((lazyvim / path).is_file(), path)
+        for path in ('lua/custom/plugins/git.lua', 'lua/custom/plugins/learning.lua'):
+            self.assertTrue((kickstart / path).is_file(), path)
+        # Cloned at the pinned commit, not at the newer upstream HEAD, with no
+        # temporary clone left behind and nothing to back up.
+        self.assertEqual(self.run_shell('git -C "$HOME/.config/nvim-kickstart" log --format=%s'), 'upstream\n')
+        self.assertEqual([p.name for p in (self.home / '.config').iterdir() if p.name.startswith('.')], [])
+        self.assertFalse((self.home / '.backup').exists())
+        state = self.config_state()
+        time.sleep(0.05)
+        self.assertIn('already present', self.run_shell(starters + 'setup_neovim_configs'))
+        self.assertEqual(self.config_state(), state)
+        # Local edits that conflict with the patch are kept and reported.
+        init = kickstart / 'init.lua'
+        init.write_text(init.read_text().replace('vim.g.have_nerd_font = true', 'vim.g.have_nerd_font = vim.env.NERD ~= nil'))
+        edited = init.read_text()
+        self.assertIn('left as is', self.run_shell(starters + 'setup_neovim_configs'))
+        self.assertEqual(init.read_text(), edited)
+
+    def test_neovim_starter_patch_ignores_outer_repository(self):
+        starters = self.starter_fixtures()
+        # A config without .git inside a dotfiles repository is patched in place.
+        self.run_shell(starters + 'git clone -q "$(neovim_starters | head -1 | cut -d"|" -f2)" "$HOME/.config/nvim-lazyvim"\n'
+                       'rm -rf "$HOME/.config/nvim-lazyvim/.git"\n'
+                       'git init -q "$HOME/.config"\n'
+                       'setup_neovim_configs\n')
+        lazy = self.home / '.config/nvim-lazyvim/lua/config/lazy.lua'
+        self.assertIn('lazyvim.plugins.extras.lang.python', lazy.read_text())
+        # It existed before setup, so the file was backed up before patching.
+        self.assertTrue(list((self.home / '.backup').glob('lazy.lua.backup.*')))
+
+    def test_backups_with_the_same_basename_do_not_collide(self):
+        for name in ('one', 'two'):
+            (self.home / name).mkdir()
+            (self.home / name / 'git.lua').write_text(name + '\n')
+        self.run_shell('backup_file "$HOME/one/git.lua"; backup_file "$HOME/two/git.lua"')
+        self.assertEqual(sorted(p.read_text() for p in (self.home / '.backup').iterdir()), ['one\n', 'two\n'])
 
     def test_pipe_with_controlling_terminal(self):
         self.pipe_selector(b'1 3\n', ['opencode', 'codex'])

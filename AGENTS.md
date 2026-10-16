@@ -17,11 +17,12 @@ Pinned downloads live in two manifests: `release_asset` (Linux CLIs) and `font_a
 - Idempotent and convergent: the same inputs (script, flags, saved profile, system, and upstream state such as package repositories and plugin default branches) end in the same state, and a rerun with nothing new changes nothing. Check versions and real integration status before installing. Write generated files with `deploy_file` (unchanged content is left alone; changed content is backed up, then replaced). For files edited by external tools use `snapshot_file`/`keep_snapshot_if_changed`, so a backup exists only when the tool changed the file. Skip tool commands that rewrite files without a change (see `yazi_packages_to_upgrade` and the up-to-date check in the Zinit updater). `tests/test_setup.py` asserts that a rerun keeps content, mode and mtime identical.
 - Yazi comes from Homebrew on macOS and from pinned official GitHub release binaries on Linux, so plugin minimum versions are satisfied.
 - Herdr integrations are optional, selected through `/dev/tty`, and existing integrations must never be rewritten automatically.
+- Neovim: LazyVim and kickstart.nvim are cloned at audited commits (`neovim_starters`) only when missing, then changed by `git apply` patches (`neovim_starter_patch`): an applied patch is left alone and conflicting user edits are kept and reported. Files added to the starters go through `deploy_file` (`deploy_neovim_files`). `vi` (`~/.local/bin/vi`) maps `NVIM_CONFIG` to `NVIM_APPNAME`; Git and Yazi open Neovim through it.
 - Zinit plugins must be Git plugins, never URL snippets: Zinit's snippet updater deletes the file when a download fails. The managed list lives in the `ZINIT_UPDATE_EOF` heredoc; adding a plugin also needs its load line in `ZSHRC_EOF`.
 
 ## Editing Embedded Configs
 
-Edit the heredocs inside `setup.sh`, not separate files. List them with `grep -n "<< *'\?[A-Z_]*EOF" setup.sh`. A quoted marker (`<< 'ZSHRC_EOF'`) writes literal content; an unquoted one (`GHOSTTY_EOF`) expands variables. `.zshrc` contains `PNPM_HOME_PLACEHOLDER`, which `sed` fills in before the result is compared with the deployed file.
+Edit the heredocs inside `setup.sh`, not separate files. List them with `grep -n "<< *'\?[A-Z_]*EOF" setup.sh`. A quoted marker (`<< 'ZSHRC_EOF'`) writes literal content; an unquoted one (`GHOSTTY_EOF`) expands variables. `.zshrc` contains `PNPM_HOME_PLACEHOLDER`, which `sed` fills in before the result is compared with the deployed file. To change a starter patch, edit the file in a clone at the pinned commit and paste `git diff` without `index` lines and with the trailing space removed from empty context lines (`sed 's/^ $//'`).
 
 ## Testing
 

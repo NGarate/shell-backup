@@ -49,6 +49,9 @@ readonly PNPM_VERSION="12.3.4"
 readonly NODE_VERSION="24.20.0"
 readonly GHOSTTY_VERSION="1.3.1"
 readonly CMUX_VERSION="0.64.22"
+readonly NEOVIM_VERSION="0.12.6"
+readonly LAZYGIT_VERSION="0.66.2"
+readonly TREE_SITTER_VERSION="0.27.1"
 
 ################################################################################
 # 2. UTILITY FUNCTIONS
@@ -143,6 +146,8 @@ brew_install_or_upgrade() {
 tool_version() {
     local output
     output=$("$1" --version 2>/dev/null) || return 0
+    # lazygit prints key=value pairs that start with a commit hash.
+    [[ "$output" != *", version="* ]] || output="${output#*, version=}"
     printf '%s\n' "$output" | sed -nE 's/^[^0-9]*([0-9]+\.[0-9]+(\.[0-9]+)?).*/\1/p' | head -1
 }
 
@@ -249,6 +254,13 @@ release_asset() {
         rg:linux:arm64) printf '%s\n' 'https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz|800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915' ;;
         pnpm:linux:amd64) printf '%s\n' 'https://github.com/pnpm/pnpm/releases/download/v12.3.4/pnpm-linux-x64-musl.tar.gz|e4c4f54599627cc0646fbb2ea8103bd6c88634533fbd6c6f5ca0f6fe7d6f5d9c' ;;
         pnpm:linux:arm64) printf '%s\n' 'https://github.com/pnpm/pnpm/releases/download/v12.3.4/pnpm-linux-arm64-musl.tar.gz|75c0b268cedbf9b57b69dcef576b9b307dd5b7650c1f967ac1b8f8d6afc1ca25' ;;
+        # Neovim tools, audited 2026-10-16. nvim is a relocatable tree (bin, lib, share).
+        nvim:linux:amd64) printf '%s\n' 'https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-x86_64.tar.gz|474430d53e6264f6d6dd18db42d6dc9df3a1b56ca9e88a325bbf860e1a811d87' ;;
+        nvim:linux:arm64) printf '%s\n' 'https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-arm64.tar.gz|8f1f64a0bdb97247034038c3823c6cbad5bdf9ecd5751b85494b71c3ee04c815' ;;
+        lazygit:linux:amd64) printf '%s\n' 'https://github.com/jesseduffield/lazygit/releases/download/v0.66.2/lazygit_0.66.2_linux_x86_64.tar.gz|158efc9ddfa1241fab5fb3526bb442c8dc6c4b1904d73213b9e4e93e03c52034' ;;
+        lazygit:linux:arm64) printf '%s\n' 'https://github.com/jesseduffield/lazygit/releases/download/v0.66.2/lazygit_0.66.2_linux_arm64.tar.gz|79a3161eeb642f0473e23db6341f7baabd4a5933e921a9c1167c5d5c765c41a4' ;;
+        tree-sitter:linux:amd64) printf '%s\n' 'https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-cli-linux-x64.zip|c7e686aec16ba17053c2e6fd87600ccb10cf8ba3d055756b17e756d538e11114' ;;
+        tree-sitter:linux:arm64) printf '%s\n' 'https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-cli-linux-arm64.zip|3c0d0113cae3fea36f2336c271cbdacbcdb349edb006319155652b9386803c55' ;;
         *) return 1 ;;
     esac
 }
@@ -777,7 +789,7 @@ resolve_font_choice() {
 
 version_inventory() {
     local name version
-    for name in git zsh fzf zoxide rg fd starship yazi ya pnpm node python3 ghostty mosh-server; do
+    for name in git zsh fzf zoxide rg fd starship yazi ya pnpm node python3 ghostty mosh-server nvim lazygit tree-sitter; do
         version=$(tool_version "$name")
         printf '  %s: %s\n' "$name" "${version:-absent/unknown}"
     done
@@ -803,11 +815,11 @@ version_inventory() {
     if [[ "$PKG_MANAGER" == apt ]]; then
         for package in zsh git curl ca-certificates file unzip tar xz-utils build-essential fontconfig python3 \
             locales wl-clipboard xclip command-not-found mosh ncurses-term fonts-noto-core \
-            fonts-noto-color-emoji fonts-symbola snapd; do
+            fonts-noto-color-emoji fonts-symbola python3-venv snapd; do
             dpkg-query -W -f='  ${Package}: ${Version}\n' "$package" 2>/dev/null || true
         done
     elif command_exists brew; then
-        brew list --versions git zsh fzf zoxide ripgrep fd starship yazi pnpm python mosh 2>/dev/null || true
+        brew list --versions git zsh fzf zoxide ripgrep fd starship yazi pnpm python mosh neovim lazygit tree-sitter-cli 2>/dev/null || true
     fi
 }
 
@@ -922,11 +934,24 @@ retry() {
     return 1
 }
 
+# A free backup path for this run. Files that share a basename (the git.lua of
+# each Neovim config) get a numeric suffix instead of overwriting each other.
+backup_path() {
+    local base="${BACKUP_DIR}/$(basename "$1").backup.${TIMESTAMP}" candidate n=1
+    candidate="$base"
+    while [[ -e "$candidate" ]]; do
+        candidate="$base.$n"
+        n=$((n + 1))
+    done
+    printf '%s\n' "$candidate"
+}
+
 backup_file() {
     local file="$1"
     if [[ -f "$file" ]]; then
         mkdir -p "$BACKUP_DIR"
-        local backup_name="${BACKUP_DIR}/$(basename "$file").backup.${TIMESTAMP}"
+        local backup_name
+        backup_name=$(backup_path "$file")
         cp "$file" "$backup_name"
         success "Backed up $file to $backup_name"
     fi
@@ -975,7 +1000,7 @@ keep_snapshot_if_changed() {
         return 0
     fi
     mkdir -p "$BACKUP_DIR"
-    backup_name="${BACKUP_DIR}/$(basename "$file").backup.${TIMESTAMP}"
+    backup_name=$(backup_path "$file")
     mv -f "$snapshot" "$backup_name"
     success "Backed up previous $file to $backup_name"
 }
@@ -1109,8 +1134,9 @@ install_core_tools() {
         local base_packages=(zsh git curl ca-certificates file unzip tar xz-utils build-essential fontconfig python3 locales)
         # mosh: server side for TermRover/Termux/any Mosh client. ncurses-term:
         # terminfo for client TERMs. Noto: Unicode symbols/emoji fallbacks.
+        # python3-venv: Mason installs Python tools (ruff) in a virtualenv.
         local extra_packages=(fzf zoxide ripgrep fd-find wl-clipboard xclip command-not-found
-            mosh ncurses-term fonts-noto-core fonts-noto-color-emoji fonts-symbola)
+            mosh ncurses-term fonts-noto-core fonts-noto-color-emoji fonts-symbola python3-venv)
         local available_extra_packages=()
         local base_tools_missing=false
         local extra_tools_missing=false
@@ -1209,6 +1235,63 @@ install_yazi() {
         warning 'Yazi and ya versions differ; plugin setup blocked'
         return 1
     }
+}
+
+# Linux: the official tree goes to ~/.local/opt/nvim-<version>, with
+# ~/.local/opt/nvim and ~/.local/bin/nvim as symlinks. Older trees are kept,
+# so a rollback is relinking ~/.local/opt/nvim.
+install_neovim() {
+    if [[ "$OS_TYPE" == darwin ]]; then
+        brew_install_or_upgrade neovim nvim || return 1
+        require_version nvim "$NEOVIM_VERSION"
+        return
+    fi
+    local before opt="$HOME/.local/opt" target asset url checksum
+    target="$opt/nvim-$NEOVIM_VERSION"
+    before=$(tool_version nvim)
+    if [[ -n "$before" ]] && version_gte "$before" "$NEOVIM_VERSION"; then
+        success "nvim retained ($before)"
+        return 0
+    fi
+    # A verified tree that is only unlinked needs no download.
+    if [[ "$(tool_version "$target/bin/nvim")" != "$NEOVIM_VERSION" ]]; then
+        asset=$(release_asset nvim "$OS_TYPE" "$ARCH") || return 1
+        IFS='|' read -r url checksum <<< "$asset"
+        mkdir -p "$opt" || return 1
+        (
+            local temp_dir root
+            temp_dir=$(mktemp -d "$opt/.nvim-setup.XXXXXX") || exit 1
+            trap 'rm -rf "$temp_dir"' EXIT
+            verified_download "$url" "$checksum" "$temp_dir/asset" 600 || exit 1
+            mkdir "$temp_dir/extracted" || exit 1
+            tar -xzf "$temp_dir/asset" -C "$temp_dir/extracted" || exit 1
+            root=$(find "$temp_dir/extracted" -mindepth 1 -maxdepth 1 -type d -print -quit)
+            [[ -n "$root" && -x "$root/bin/nvim" ]] || exit 1
+            require_version "$root/bin/nvim" "$NEOVIM_VERSION" || exit 1
+            rm -rf "$target" || exit 1
+            mv "$root" "$target" || exit 1
+        ) || return 1
+    fi
+    mkdir -p "$HOME/.local/bin" || return 1
+    ln -sfn "$target" "$opt/nvim" || return 1
+    ln -sfn "$opt/nvim/bin/nvim" "$HOME/.local/bin/nvim" || return 1
+    hash -r
+    log "nvim ${before:-absent} -> $(tool_version nvim) (target $NEOVIM_VERSION)"
+    require_version nvim "$NEOVIM_VERSION"
+}
+
+# lazygit (Git UI inside Neovim) and the tree-sitter CLI, which the
+# nvim-treesitter main branch needs to build parsers.
+install_neovim_tools() {
+    if [[ "$OS_TYPE" == darwin ]]; then
+        brew_install_or_upgrade lazygit lazygit || return 1
+        brew_install_or_upgrade tree-sitter-cli tree-sitter || return 1
+    else
+        install_release_tool lazygit "$LAZYGIT_VERSION" || return 1
+        install_release_tool tree-sitter "$TREE_SITTER_VERSION" || return 1
+    fi
+    require_version lazygit "$LAZYGIT_VERSION" || return 1
+    require_version tree-sitter "$TREE_SITTER_VERSION"
 }
 
 install_ghostty() {
@@ -1802,6 +1885,9 @@ zinit light MichaelAquilina/zsh-you-should-use
 # Yazi launcher - keep shell in the directory where Yazi exits
 [[ -f ~/.zsh/y.zsh ]] && source ~/.zsh/y.zsh
 
+# Neovim launchers (lv, kv, nvims) and the NVIM_CONFIG default used by vi
+[[ -f ~/.zsh/nvim.zsh ]] && source ~/.zsh/nvim.zsh
+
 # Load aliases file
 [[ -f ~/.zsh_aliases ]] && source ~/.zsh_aliases
 
@@ -2017,19 +2103,29 @@ group = "git"
 url = "*/"
 run = "git"
 group = "git"
+
+# Text, code and empty files open in Neovim through ~/.local/bin/vi, so the
+# config named in NVIM_CONFIG is used (LazyVim by default). This replaces
+# Yazi's ${EDITOR:-vi} opener, which every built-in edit rule refers to.
+[opener]
+edit = [
+    { run = '"$HOME/.local/bin/vi" %s', block = true, desc = "Neovim (vi)", for = "unix" },
+]
 YAZI_TOML_EOF
         if [[ ${#dev_openers[@]} -gt 0 ]]; then
-            printf '\n[opener]\n'
             printf 'dev_open = [\n'
             printf '%s\n' "${dev_openers[@]}"
-            printf ']\n\n'
-            cat << 'YAZI_OPEN_RULES_EOF'
-[open]
-prepend_rules = [
-    { url = "*/", use = "dev_open" },
+            printf ']\n'
+        fi
+        printf '\n[open]\nprepend_rules = [\n'
+        if [[ ${#dev_openers[@]} -gt 0 ]]; then
+            printf '%s\n' '    { url = "*/", use = "dev_open" },'
+        fi
+        cat << 'YAZI_OPEN_RULES_EOF'
+    # Code and config files whose MIME type is not text/*.
+    { mime = "application/{toml,yaml,x-yaml,xml,x-sh,x-shellscript,sql,x-ndjson,x-subrip,*+json,*+xml}", use = [ "edit", "reveal" ] },
 ]
 YAZI_OPEN_RULES_EOF
-        fi
     } | deploy_file "$HOME/.config/yazi/yazi.toml" 644
 
     deploy_file "$HOME/.config/yazi/theme.toml" 644 << 'YAZI_THEME_EOF'
@@ -2629,7 +2725,504 @@ Y_EOF
 }
 
 ################################################################################
-# 11. SHELL SETUP
+# 11. NEOVIM CONFIGURATION
+################################################################################
+
+# LazyVim and kickstart.nvim live side by side as NVIM_APPNAME configs in
+# ~/.config/<name>, and `vi` opens the one named in NVIM_CONFIG. A missing
+# starter is cloned at its audited commit; later upstream updates are up to
+# the user (`git pull` inside the config). Format: name|repository|commit.
+neovim_starters() {
+    printf '%s\n' \
+        'nvim-lazyvim|https://github.com/LazyVim/starter|803bc181d7c0d6d5eeba9274d9be49b287294d99' \
+        'nvim-kickstart|https://github.com/nvim-lua/kickstart.nvim|8e35dbedb7966e3a95e1f26f9fc1179ab6c68db4'
+}
+
+# Managed edits to files owned by each starter, as patches for `git apply`
+# (empty context lines carry no trailing space).
+neovim_starter_patch() {
+    case "$1" in
+        nvim-lazyvim) cat << 'LAZYVIM_PATCH_EOF'
+diff --git a/lua/config/lazy.lua b/lua/config/lazy.lua
+--- a/lua/config/lazy.lua
++++ b/lua/config/lazy.lua
+@@ -18,6 +18,16 @@ require("lazy").setup({
+   spec = {
+     -- add LazyVim and import its plugins
+     { "LazyVim/LazyVim", import = "lazyvim.plugins" },
++    -- official extras (the same as enabling them in :LazyExtras)
++    { import = "lazyvim.plugins.extras.lang.python" },
++    { import = "lazyvim.plugins.extras.lang.typescript" },
++    { import = "lazyvim.plugins.extras.lang.json" },
++    { import = "lazyvim.plugins.extras.lang.yaml" },
++    { import = "lazyvim.plugins.extras.lang.toml" },
++    { import = "lazyvim.plugins.extras.lang.markdown" },
++    { import = "lazyvim.plugins.extras.lang.docker" },
++    { import = "lazyvim.plugins.extras.lang.ansible" },
++    { import = "lazyvim.plugins.extras.lang.git" },
+     -- import/override with your plugins
+     { import = "plugins" },
+   },
+@@ -45,7 +55,7 @@ require("lazy").setup({
+         -- "netrwPlugin",
+         "tarPlugin",
+         "tohtml",
+-        "tutor",
++        -- "tutor", -- enabled so :Tutor works
+         "zipPlugin",
+       },
+     },
+LAZYVIM_PATCH_EOF
+            ;;
+        nvim-kickstart) cat << 'KICKSTART_PATCH_EOF'
+diff --git a/init.lua b/init.lua
+--- a/init.lua
++++ b/init.lua
+@@ -99,7 +99,7 @@ do
+   vim.g.maplocalleader = ' '
+
+   -- Set to true if you have a Nerd Font installed and selected in the terminal
+-  vim.g.have_nerd_font = false
++  vim.g.have_nerd_font = true
+
+   -- [[ Setting options ]]
+   --  See `:help vim.o`
+@@ -735,8 +735,17 @@ do
+   local servers = {
+     -- clangd = {},
+     -- gopls = {},
+-    -- pyright = {},
+-    -- tsc = {},
++    pyright = {}, -- Python
++    ruff = {}, -- Python: lint + format
++    ts_ls = {}, -- JavaScript / TypeScript
++    bashls = { filetypes = { 'sh', 'bash', 'zsh' } },
++    jsonls = {},
++    yamlls = {},
++    taplo = {}, -- TOML
++    marksman = {}, -- Markdown
++    dockerls = {},
++    docker_compose_language_service = {},
++    ansiblels = {},
+     --
+     -- Some languages (like rust) have entire language plugins that can be useful:
+     --    https://github.com/mrcjkb/rustaceanvim
+@@ -804,6 +813,8 @@ do
+   local ensure_installed = vim.tbl_keys(servers or {})
+   vim.list_extend(ensure_installed, {
+     -- You can add other tools here that you want Mason to install
++    'shellcheck', -- shell linter (used by bashls)
++    'shfmt', -- shell formatter
+   })
+
+   require('mason-tool-installer').setup { ensure_installed = ensure_installed }
+@@ -826,8 +837,9 @@ do
+     format_on_save = function(bufnr)
+       -- You can specify filetypes to autoformat on save here:
+       local enabled_filetypes = {
+-        -- lua = true,
+-        -- python = true,
++        lua = true,
++        python = true,
++        sh = true,
+       }
+       if enabled_filetypes[vim.bo[bufnr].filetype] then
+         return { timeout_ms = 500 }
+@@ -840,6 +852,9 @@ do
+     },
+     -- You can also specify external formatters in here.
+     formatters_by_ft = {
++      lua = { 'stylua' },
++      python = { 'ruff_format' },
++      sh = { 'shfmt' },
+       -- rust = { 'rustfmt' },
+       -- Conform can also run multiple formatters sequentially
+       -- python = { "isort", "black" },
+@@ -868,8 +883,8 @@ do
+   --    See the README about individual language/framework/plugin snippets:
+   --    https://github.com/rafamadriz/friendly-snippets
+   --
+-  -- vim.pack.add { gh 'rafamadriz/friendly-snippets' }
+-  -- require('luasnip.loaders.from_vscode').lazy_load()
++  vim.pack.add { gh 'rafamadriz/friendly-snippets' }
++  require('luasnip.loaders.from_vscode').lazy_load()
+
+   -- [[ Autocomplete Engine ]]
+   vim.pack.add { { src = gh 'saghen/blink.cmp', version = vim.version.range '1.*' } }
+@@ -948,7 +963,11 @@ do
+   vim.pack.add { { src = gh 'nvim-treesitter/nvim-treesitter', version = 'main' } }
+
+   -- Ensure basic parsers are installed
+-  local parsers = { 'bash', 'c', 'diff', 'html', 'lua', 'luadoc', 'markdown', 'markdown_inline', 'query', 'vim', 'vimdoc' }
++  local parsers = {
++    'bash', 'c', 'diff', 'html', 'lua', 'luadoc', 'markdown', 'markdown_inline', 'query', 'vim', 'vimdoc',
++    'python', 'javascript', 'typescript', 'tsx', 'json', 'yaml', 'toml', 'dockerfile',
++    'gitcommit', 'git_rebase', 'git_config', 'gitignore',
++  }
+   require('nvim-treesitter').install(parsers)
+
+   ---@param buf integer
+@@ -1015,15 +1034,15 @@ do
+   --  Uncomment any of the lines below to enable them (you will need to restart nvim).
+   --
+   -- require 'kickstart.plugins.debug'
+-  -- require 'kickstart.plugins.indent_line'
++  require 'kickstart.plugins.indent_line'
+   -- require 'kickstart.plugins.lint'
+-  -- require 'kickstart.plugins.autopairs'
+-  -- require 'kickstart.plugins.neo-tree'
++  require 'kickstart.plugins.autopairs'
++  require 'kickstart.plugins.neo-tree'
+
+   -- NOTE: You can add your own plugins, configuration, etc. in `lua/custom/plugins/*.lua`.
+   --
+   -- For independent modules, uncomment the convenience loader:
+-  -- require 'custom.plugins'
++  require 'custom.plugins' -- git.lua (diffview, lazygit), learning.lua (hardtime, precognition, tips)
+   --
+   -- `custom.plugins` automatically loads files from that directory, but their
+   -- order is unspecified. If plugins depend on each other, keep them in the same
+KICKSTART_PATCH_EOF
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+# Files added to each starter. deploy_file keeps reruns convergent.
+deploy_neovim_files() {
+    local dir="$2"
+    case "$1" in
+        nvim-lazyvim)
+            deploy_file "$dir/lua/plugins/git.lua" 644 << 'LAZYVIM_GIT_EOF' || return 1
+-- Managed by shell-backup setup.sh.
+-- Git: LazyVim already ships gitsigns and lazygit. diffview adds side-by-side
+-- review of changes and history, and a 3-way merge tool for conflicts.
+return {
+  {
+    "sindrets/diffview.nvim",
+    cmd = { "DiffviewOpen", "DiffviewClose", "DiffviewFileHistory", "DiffviewToggleFiles" },
+    keys = {
+      { "<leader>gv", "<cmd>DiffviewOpen<cr>", desc = "Diffview: changes / conflicts" },
+      { "<leader>gV", "<cmd>DiffviewFileHistory %<cr>", desc = "Diffview: file history" },
+      { "<leader>gH", "<cmd>DiffviewFileHistory<cr>", desc = "Diffview: repo history" },
+    },
+    opts = {
+      enhanced_diff_hl = true,
+      view = {
+        -- conflicts: OURS | result | THEIRS, with the common ancestor available
+        merge_tool = { layout = "diff3_mixed", disable_diagnostics = true },
+      },
+      keymaps = {
+        view = { { "n", "q", "<cmd>DiffviewClose<cr>", { desc = "Close Diffview" } } },
+        file_panel = { { "n", "q", "<cmd>DiffviewClose<cr>", { desc = "Close Diffview" } } },
+        file_history_panel = { { "n", "q", "<cmd>DiffviewClose<cr>", { desc = "Close Diffview" } } },
+      },
+    },
+  },
+}
+LAZYVIM_GIT_EOF
+            deploy_file "$dir/lua/plugins/bash.lua" 644 << 'LAZYVIM_BASH_EOF' || return 1
+-- Managed by shell-backup setup.sh.
+-- Bash/zsh: LazyVim has no shell extra, so it is added here.
+return {
+  {
+    "neovim/nvim-lspconfig",
+    opts = { servers = { bashls = { filetypes = { "sh", "bash", "zsh" } } } },
+  },
+  { "mason-org/mason.nvim", opts = { ensure_installed = { "shellcheck", "shfmt" } } },
+  { "nvim-treesitter/nvim-treesitter", opts = { ensure_installed = { "bash" } } },
+  { "stevearc/conform.nvim", opts = { formatters_by_ft = { sh = { "shfmt" }, bash = { "shfmt" } } } },
+}
+LAZYVIM_BASH_EOF
+            deploy_file "$dir/lua/plugins/learning.lua" 644 << 'LAZYVIM_LEARNING_EOF' || return 1
+-- Managed by shell-backup setup.sh.
+-- Helpers to learn a little at a time while using Neovim.
+local tips_dir = vim.fn.expand("~/Proyectos/tips.nvim")
+
+return {
+  -- Hints when a motion could be shorter (jjjj -> 4j). Hints only, nothing is blocked.
+  {
+    "m4xshen/hardtime.nvim",
+    event = "VeryLazy",
+    dependencies = { "MunifTanjim/nui.nvim" },
+    opts = {
+      restriction_mode = "hint",
+      disable_mouse = false,
+      -- keep the arrow keys (blocked by default)
+      disabled_keys = { ["<Up>"] = false, ["<Down>"] = false, ["<Left>"] = false, ["<Right>"] = false },
+    },
+    keys = {
+      { "<leader>uH", "<cmd>Hardtime toggle<cr>", desc = "Toggle Hardtime (hints)" },
+    },
+  },
+  -- Shows on the line where w/b/e/$/^/{/} and friends would jump.
+  {
+    "tris203/precognition.nvim",
+    event = "VeryLazy",
+    opts = { startVisible = false },
+    keys = {
+      { "<leader>uP", function() require("precognition").toggle() end, desc = "Toggle Precognition (motions)" },
+    },
+  },
+  -- tips.nvim (local project): daily tip, a tip when each tool opens and
+  -- :TipQuiz. Loaded at startup to detect `git mergetool`; skipped if absent.
+  {
+    dir = tips_dir,
+    name = "tips.nvim",
+    lazy = false,
+    cond = vim.uv.fs_stat(tips_dir) ~= nil,
+    opts = { preset = "lazyvim", key = "<leader>T" },
+  },
+}
+LAZYVIM_LEARNING_EOF
+            ;;
+        nvim-kickstart)
+            deploy_file "$dir/lua/custom/plugins/git.lua" 644 << 'KICKSTART_GIT_EOF' || return 1
+-- Managed by shell-backup setup.sh.
+-- Git: gitsigns is already set up in init.lua (<leader>h...). Added here:
+--   diffview.nvim  side-by-side changes, history and a 3-way merge tool
+--   lazygit.nvim   lazygit in a floating window
+-- Same keymaps as the LazyVim config.
+
+vim.pack.add {
+  'https://github.com/nvim-lua/plenary.nvim',
+  'https://github.com/sindrets/diffview.nvim',
+  'https://github.com/kdheepak/lazygit.nvim',
+}
+
+require('diffview').setup {
+  enhanced_diff_hl = true,
+  view = {
+    -- conflicts: OURS | result | THEIRS, with the common ancestor available
+    merge_tool = { layout = 'diff3_mixed', disable_diagnostics = true },
+  },
+  keymaps = {
+    view = { { 'n', 'q', '<cmd>DiffviewClose<cr>', { desc = 'Close Diffview' } } },
+    file_panel = { { 'n', 'q', '<cmd>DiffviewClose<cr>', { desc = 'Close Diffview' } } },
+    file_history_panel = { { 'n', 'q', '<cmd>DiffviewClose<cr>', { desc = 'Close Diffview' } } },
+  },
+}
+
+require('which-key').add { { '<leader>g', group = '[G]it' } }
+
+vim.keymap.set('n', '<leader>gg', '<cmd>LazyGit<cr>', { desc = '[G]it: lazygit' })
+vim.keymap.set('n', '<leader>gs', require('telescope.builtin').git_status, { desc = '[G]it [S]tatus' })
+vim.keymap.set('n', '<leader>gv', '<cmd>DiffviewOpen<cr>', { desc = 'Diffview: changes / conflicts' })
+vim.keymap.set('n', '<leader>gV', '<cmd>DiffviewFileHistory %<cr>', { desc = 'Diffview: file history' })
+vim.keymap.set('n', '<leader>gH', '<cmd>DiffviewFileHistory<cr>', { desc = 'Diffview: repo history' })
+KICKSTART_GIT_EOF
+            deploy_file "$dir/lua/custom/plugins/learning.lua" 644 << 'KICKSTART_LEARNING_EOF' || return 1
+-- Managed by shell-backup setup.sh.
+-- Helpers to learn a little at a time while using Neovim.
+
+vim.pack.add {
+  'https://github.com/MunifTanjim/nui.nvim',
+  'https://github.com/m4xshen/hardtime.nvim',
+  'https://github.com/tris203/precognition.nvim',
+}
+
+-- Hints when a motion could be shorter (jjjj -> 4j). Hints only, nothing is blocked.
+require('hardtime').setup {
+  restriction_mode = 'hint',
+  disable_mouse = false,
+  -- keep the arrow keys (blocked by default)
+  disabled_keys = { ['<Up>'] = false, ['<Down>'] = false, ['<Left>'] = false, ['<Right>'] = false },
+}
+vim.keymap.set('n', '<leader>tH', '<cmd>Hardtime toggle<cr>', { desc = '[T]oggle [H]ardtime (hints)' })
+
+-- Shows on the line where w/b/e/$/^/{/} and friends would jump.
+require('precognition').setup { startVisible = false }
+vim.keymap.set('n', '<leader>tp', function() require('precognition').toggle() end, { desc = '[T]oggle [P]recognition (motions)' })
+
+-- tips.nvim (local project): daily tip, a tip when each tool opens and
+-- :TipQuiz to memorise keymaps. Skipped if the project is absent.
+local tips_dir = vim.fn.expand '~/Proyectos/tips.nvim'
+if vim.uv.fs_stat(tips_dir) then
+  vim.opt.rtp:prepend(tips_dir)
+  require('tips').setup { preset = 'kickstart', key = '<leader>T' }
+end
+KICKSTART_LEARNING_EOF
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+# Starters are cloned and patched by Git without looking in parent
+# directories, so a dotfiles repository around ~/.config is never used.
+starter_git() {
+    local dir="$1"
+    shift
+    GIT_CEILING_DIRECTORIES="$(dirname "$dir")" git -C "$dir" "$@"
+}
+
+fresh_clone() {
+    rm -rf "$2"
+    git clone --quiet "$1" "$2"
+}
+
+# Clone next to the target and rename it into place, so an interrupted run
+# never leaves a partial config behind.
+clone_neovim_starter() {
+    local repository="$1" commit="$2" target="$3" temp
+    mkdir -p "$(dirname "$target")" || return 1
+    temp=$(mktemp -d "$(dirname "$target")/.$(basename "$target").XXXXXX") || return 1
+    if retry fresh_clone "$repository" "$temp/repo" &&
+        starter_git "$temp/repo" reset --quiet --hard "$commit" &&
+        mv "$temp/repo" "$target"; then
+        rmdir "$temp"
+    else
+        rm -rf "$temp"
+        return 1
+    fi
+}
+
+# Apply the managed patch once: an already patched file is left alone, and
+# local edits that conflict with it are kept and reported (the user owns the
+# config). A pre-existing config is backed up before it is patched.
+apply_neovim_starter_patch() {
+    local name="$1" dir="$2" fresh="$3" patch file status=0
+    patch=$(mktemp) || return 1
+    if ! neovim_starter_patch "$name" > "$patch"; then
+        rm -f "$patch"
+        return 1
+    fi
+    if starter_git "$dir" apply --reverse --check "$patch" 2>/dev/null; then
+        success "$name managed edits already present"
+    elif starter_git "$dir" apply --check "$patch" 2>/dev/null; then
+        if [[ "$fresh" != true ]]; then
+            while IFS= read -r file; do
+                backup_file "$dir/$file"
+            done < <(sed -n 's|^+++ b/||p' "$patch")
+        fi
+        if starter_git "$dir" apply "$patch"; then
+            success "$name managed edits applied"
+        else
+            status=1
+        fi
+    else
+        warning "$name: local edits conflict with the managed changes; $dir left as is"
+    fi
+    rm -f "$patch"
+    return "$status"
+}
+
+setup_neovim_configs() {
+    log "Setting up Neovim configs..."
+    command_exists git || return 1
+    local name repository commit dir fresh status=0
+    while IFS='|' read -r name repository commit; do
+        dir="$HOME/.config/$name"
+        fresh=false
+        if [[ ! -e "$dir" ]]; then
+            log "Cloning $name (${repository#https://github.com/} at ${commit:0:7})..."
+            if ! clone_neovim_starter "$repository" "$commit" "$dir"; then
+                warning "Could not clone $repository"
+                status=1
+                continue
+            fi
+            fresh=true
+        elif [[ ! -f "$dir/init.lua" ]]; then
+            warning "$dir has no init.lua; not treated as a $name config"
+            status=1
+            continue
+        fi
+        apply_neovim_starter_patch "$name" "$dir" "$fresh" || status=1
+        deploy_neovim_files "$name" "$dir" || status=1
+    done < <(neovim_starters)
+    [[ "$status" == 0 ]] && success "Neovim configs ready (plugins install on first start)"
+    return "$status"
+}
+
+deploy_neovim_launchers() {
+    log "Deploying Neovim launchers..."
+
+    deploy_file "$HOME/.local/bin/vi" 755 << 'NVIM_VI_EOF'
+#!/bin/sh
+# Managed by shell-backup setup.sh.
+# vi: Neovim with the config named in NVIM_CONFIG (default nvim-lazyvim),
+# passed as NVIM_APPNAME. Configs: ~/.config/nvim-lazyvim, ~/.config/nvim-kickstart.
+# Example: NVIM_CONFIG=nvim-kickstart vi file.txt
+exec env NVIM_APPNAME="${NVIM_CONFIG:-nvim-lazyvim}" nvim "$@"
+NVIM_VI_EOF
+
+    deploy_file "$HOME/.zsh/nvim.zsh" 644 << 'NVIM_ZSH_EOF'
+# Neovim: LazyVim and kickstart.nvim side by side (NVIM_APPNAME).
+# `vi` (~/.local/bin/vi) opens the config named in NVIM_CONFIG, and so do Git
+# and Yazi. Change the default in ~/.zshrc.local or ~/.env.
+export NVIM_CONFIG="${NVIM_CONFIG:-nvim-lazyvim}"
+export EDITOR="${EDITOR:-vi}"
+export VISUAL="${VISUAL:-vi}"
+
+# Remove any existing aliases to prevent conflicts
+unalias lv kv nvims 2>/dev/null || true
+
+alias lv='NVIM_CONFIG=nvim-lazyvim vi'
+alias kv='NVIM_CONFIG=nvim-kickstart vi'
+
+# nvims - pick a config with fzf, then open it (files may follow)
+nvims() {
+    if ! command -v fzf >/dev/null 2>&1; then
+        echo "nvims: fzf is required" >&2
+        return 1
+    fi
+
+    local config
+    config=$(printf '%s\n' nvim-lazyvim nvim-kickstart |
+        fzf --prompt='Neovim config > ' --height='~50%' --layout=reverse --border) || return 0
+    [[ -n "$config" ]] || return 0
+    NVIM_CONFIG="$config" vi "$@"
+}
+NVIM_ZSH_EOF
+    success "Neovim launchers deployed (vi, lv, kv, nvims)"
+}
+
+# Git opens Neovim through vi (so NVIM_CONFIG applies) for commit messages,
+# `git mergetool` and `git difftool`. Only keys with another value are
+# written, and ~/.gitconfig is backed up only when Git changed it.
+configure_git_editor() {
+    command_exists git || return 1
+    local vi="$HOME/.local/bin/vi" style=diff3 file="$HOME/.gitconfig"
+    local xdg_file="${XDG_CONFIG_HOME:-$HOME/.config}/git/config" entry snapshot status=0
+    local pending=()
+    # zdiff3 (Git 2.35+) moves lines common to both sides out of the conflict.
+    if version_gte "$(tool_version git)" 2.35; then
+        style=zdiff3
+    fi
+    local settings=(
+        "core.editor=$vi"
+        "merge.tool=nvimdiff"
+        "merge.conflictstyle=$style"
+        "mergetool.nvimdiff.path=$vi"
+        "mergetool.keepBackup=false"
+        "mergetool.prompt=false"
+        "diff.tool=nvimdiff"
+        "difftool.nvimdiff.path=$vi"
+        "difftool.prompt=false"
+    )
+    # `git config --global` writes the XDG file when only that one exists.
+    if [[ ! -f "$file" && -f "$xdg_file" ]]; then
+        file="$xdg_file"
+    fi
+    for entry in "${settings[@]}"; do
+        if [[ "$(git config --global --get "${entry%%=*}" 2>/dev/null || true)" != "${entry#*=}" ]]; then
+            pending+=("$entry")
+        fi
+    done
+    if [[ ${#pending[@]} -eq 0 ]]; then
+        success "Git already uses Neovim (vi) as editor, merge and diff tool"
+        return 0
+    fi
+    snapshot=$(snapshot_file "$file") || return 1
+    for entry in "${pending[@]}"; do
+        git config --global "${entry%%=*}" "${entry#*=}" || status=1
+    done
+    keep_snapshot_if_changed "$file" "$snapshot"
+    [[ "$status" == 0 ]] || return 1
+    success "Git uses Neovim (vi) as editor, merge and diff tool"
+}
+
+################################################################################
+# 12. SHELL SETUP
 ################################################################################
 
 login_shell() {
@@ -2669,7 +3262,7 @@ setup_shell() {
 }
 
 ################################################################################
-# 12. NVM SETUP
+# 13. NVM SETUP
 ################################################################################
 
 setup_nvm() {
@@ -2707,7 +3300,7 @@ setup_nvm() {
 }
 
 ################################################################################
-# 13. ZINIT PLUGINS SETUP
+# 14. ZINIT PLUGINS SETUP
 ################################################################################
 
 setup_zinit_plugins() {
@@ -2767,7 +3360,7 @@ setup_zinit_plugins() {
 }
 
 ################################################################################
-# 14. YAZI PLUGINS SETUP
+# 15. YAZI PLUGINS SETUP
 ################################################################################
 
 # Managed Yazi packages: ya id|upstream repository|entry file.
@@ -2880,7 +3473,7 @@ setup_yazi_plugins() {
 }
 
 ################################################################################
-# 15. VERIFICATION
+# 16. VERIFICATION
 ################################################################################
 
 verify_installation() {
@@ -2935,7 +3528,8 @@ verify_installation() {
 
     local item name minimum
     for item in "node:$NODE_VERSION" "pnpm:$PNPM_VERSION" "starship:$STARSHIP_VERSION" \
-        fzf:0.74.3 zoxide:0.10.0 rg:15.2.0 fd:10.5.0 "ya:$MIN_YAZI_VERSION"; do
+        fzf:0.74.3 zoxide:0.10.0 rg:15.2.0 fd:10.5.0 "ya:$MIN_YAZI_VERSION" \
+        "nvim:$NEOVIM_VERSION" "lazygit:$LAZYGIT_VERSION" "tree-sitter:$TREE_SITTER_VERSION"; do
         name="${item%%:*}"; minimum="${item#*:}"
         check_versioned_cmd "$name" "$minimum" "$(tool_version "$name")"
     done
@@ -2956,6 +3550,11 @@ verify_installation() {
     check_path "Yazi init.lua" "$HOME/.config/yazi/init.lua"
     check_path "Yazi yazi.toml" "$HOME/.config/yazi/yazi.toml"
     check_path "Yazi theme.toml" "$HOME/.config/yazi/theme.toml"
+    check_path "vi launcher" "$HOME/.local/bin/vi"
+    check_path "Neovim launchers" "$HOME/.zsh/nvim.zsh"
+    while IFS='|' read -r asset_name _; do
+        check_path "Neovim config $asset_name" "$HOME/.config/$asset_name/init.lua"
+    done < <(neovim_starters)
     while IFS='|' read -r asset_name asset_path; do
         [[ -n "$asset_name" ]] || continue
         check_path "$asset_name" "$asset_path"
@@ -3005,7 +3604,7 @@ verify_installation() {
 }
 
 ################################################################################
-# 16. POST-INSTALLATION SUMMARY
+# 17. POST-INSTALLATION SUMMARY
 ################################################################################
 
 print_summary() {
@@ -3020,6 +3619,7 @@ print_summary() {
     printf '%s\n' 'Reload: exec zsh | Plugins: zinit list; ya pkg list' \
         "Terminal font: $(font_family) (switch: setup.sh --font=iosevka|jetbrains)" \
         'Local preferences: ~/.zshrc.local and ~/.config/ghostty/config.local' \
+        'Neovim: vi opens NVIM_CONFIG (nvim-lazyvim or nvim-kickstart); lv, kv, nvims. Plugins install on first start' \
         'Any SSH/Mosh client: ssh -t <host> shell-backup-attach [session] (see README.md)' \
         'Client without Nerd Font: STARSHIP_CONFIG=~/.config/starship-plain.toml in ~/.zshrc.local'
     if [[ "$SETUP_FAILED" == true ]]; then
@@ -3030,7 +3630,7 @@ print_summary() {
 }
 
 ################################################################################
-# 17. MAIN EXECUTION
+# 18. MAIN EXECUTION
 ################################################################################
 
 main() {
@@ -3059,6 +3659,8 @@ main() {
     run_stage 'UTF-8 locale' ensure_utf8_locale
     run_stage Starship install_starship
     run_stage Yazi install_yazi
+    run_stage Neovim install_neovim
+    run_stage 'Neovim tools' install_neovim_tools
     if [[ "$OS_TYPE" == darwin ]]; then
         run_stage cmux install_cmux
         record_result Ghostty skipped 'macOS uses cmux; shared rendering config is deployed'
@@ -3075,6 +3677,9 @@ main() {
     run_stage 'Yazi config' deploy_yazi_config
     run_stage 'Starship config' deploy_starship_config
     run_stage 'Custom functions' deploy_custom_functions
+    run_stage 'Neovim launchers' deploy_neovim_launchers
+    run_stage 'Neovim configs' setup_neovim_configs
+    run_stage 'Git editor' configure_git_editor
     run_stage 'Default shell' setup_shell
     run_stage 'NVM / Node' setup_nvm
     # Activate NVM's selected default for subsequent verification in this shell.

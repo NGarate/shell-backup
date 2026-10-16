@@ -24,7 +24,8 @@ bash setup.sh --font=jetbrains # Terminal font: iosevka (default) or jetbrains
 | macOS arm64 | cmux | None by default; Herdr only with `--with-herdr` (never started automatically in cmux) |
 
 Both profiles install zsh with Zinit, Starship, Yazi with Git/Starship plugins,
-fzf, zoxide, ripgrep, fd, NVM/Node, pnpm, mosh-server and the fonts below.
+fzf, zoxide, ripgrep, fd, NVM/Node, pnpm, mosh-server, [Neovim](#neovim) with
+lazygit and the tree-sitter CLI, and the fonts below.
 
 ## Fonts and icons
 
@@ -53,6 +54,41 @@ generated files are only rewritten when their content differs. A replaced or
 tool-modified file is backed up in `~/.backup` only when it actually changed; results and versions are
 logged in `~/.setup.log`. A failed required stage produces a nonzero exit status.
 See [DEPENDENCIES.md](./DEPENDENCIES.md) for versions, checksums and platform limits.
+
+## Neovim
+
+Two configs live side by side through `NVIM_APPNAME`, each with its own
+plugins, state and cache:
+
+| Config | Folder | Base |
+|---|---|---|
+| `nvim-lazyvim` (default) | `~/.config/nvim-lazyvim` | [LazyVim starter](https://github.com/LazyVim/starter) and language extras |
+| `nvim-kickstart` | `~/.config/nvim-kickstart` | [kickstart.nvim](https://github.com/nvim-lua/kickstart.nvim), a single `init.lua` to read and change |
+
+```bash
+vi file          # The config named in NVIM_CONFIG (default nvim-lazyvim)
+lv file; kv file # Force LazyVim / kickstart
+nvims file       # Pick one with fzf
+```
+
+`vi` is `~/.local/bin/vi`. Git (commit messages, `git mergetool`,
+`git difftool`) and Yazi (text and code files) open Neovim through it, so
+`NVIM_CONFIG` decides the config everywhere. Set another default in
+`~/.zshrc.local` or `~/.env`; plain `nvim` still uses `~/.config/nvim`.
+
+Both configs add the same Git workflow: gitsigns, lazygit (`<leader>gg`) and
+diffview (`<leader>gv` for changes and 3-way conflict resolution, `<leader>gV`
+and `<leader>gH` for history), plus LSP, formatting and Treesitter for Python,
+JS/TS, Bash/zsh, JSON, YAML, TOML, Markdown, Docker and Ansible. Learning
+helpers: hardtime hints, precognition and, when `~/Proyectos/tips.nvim`
+exists, tips.nvim. Git uses `zdiff3` conflict markers (`diff3` before Git 2.35).
+
+Setup clones a missing starter at an audited commit and applies its managed
+changes with `git apply`; reruns leave applied changes and your own edits
+alone (conflicting edits are reported, not overwritten). Plugins, language
+servers and parsers install on the first start. Update plugins with `:Lazy`
+(LazyVim) or `:lua vim.pack.update()` (kickstart), and the starters themselves
+with `git pull` in their folders.
 
 ## Herdr
 
@@ -113,6 +149,8 @@ Each computer keeps its own sessions; cmux workspaces remain local to the Mac.
 | `~/.config/starship.toml` | Prompt theme (Nerd Font); `starship-plain.toml` is the plain-symbol variant |
 | `~/.config/shell-backup/profile` | Saved setup choices (`FONT=iosevka` or `FONT=jetbrains`) |
 | `~/.config/yazi/{init.lua,yazi.toml}` | File manager configuration |
+| `~/.config/nvim-lazyvim`, `~/.config/nvim-kickstart` | Neovim configs; yours to edit (setup only patches the lines it manages) |
+| `~/.gitconfig` | Setup sets the editor, merge and diff tool to Neovim; other keys are untouched |
 | `~/.config/herdr/config.toml` | Herdr configuration; setup only changes the prefix |
 
 Edit the heredocs in `setup.sh` for shared defaults. Generated files can be
@@ -127,6 +165,8 @@ in the `.local` files. Run `exec zsh` to reload the shell.
 | `gst`, `gco`, `gcb` | Git status, checkout, create branch (OMZ aliases) |
 | `z <directory>` | Jump to a frequently used directory |
 | `y` | Open Yazi and keep its exit directory in the shell |
+| `vi`, `lv`, `kv`, `nvims` | Neovim (see [Neovim](#neovim)) |
+| `git mergetool` | Resolve conflicts in a 4-pane nvimdiff |
 | `Ctrl+R` / `Ctrl+T` | Search history / files with fzf |
 | Up / Down after typing | Search history containing that text |
 | `Cmd+Shift+F` (macOS), `Alt+Shift+F` (Linux) | Toggle fullscreen |
