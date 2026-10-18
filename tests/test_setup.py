@@ -1,6 +1,7 @@
 """Isolated acceptance checks: no network, packages, harnesses or real home writes."""
 import os
 from pathlib import Path
+import plistlib
 import select
 import shlex
 import subprocess
@@ -545,6 +546,57 @@ shell_backup_update_zinit
         self.assertEqual(len(output.splitlines()), 8)
         self.assertNotIn('snippets', output)
         self.run_shell('rm "$HOME/.zsh/zinit-update.zsh"; ! verify_zinit_assets')
+
+    def hotkeys(self, enabled):
+        hotkey = {'enabled': enabled, 'value': {'parameters': [32, 49, 262144], 'type': 'standard'}}
+        (self.home / 'hotkeys.plist').write_bytes(plistlib.dumps({'AppleSymbolicHotKeys': {'60': hotkey}}))
+
+    def ctrl_space(self, answers):
+        self.executable('defaults', '#!/bin/bash\ncat "$HOME/hotkeys.plist"\n')
+        # Opening Settings stands in for the user unchecking the shortcut.
+        self.executable('open', r'''#!/bin/bash
+echo "open $1" >> "$CALLS"
+python3 - "$HOME/hotkeys.plist" << 'PY'
+import plistlib, sys
+with open(sys.argv[1], 'rb') as f:
+    data = plistlib.load(f)
+data['AppleSymbolicHotKeys']['60']['enabled'] = False
+with open(sys.argv[1], 'wb') as f:
+    plistlib.dump(data, f)
+PY
+''')
+        (self.home / 'answers').write_text(''.join(a + '\n' for a in answers))
+        return self.run_shell(r'''OS_TYPE=darwin
+can_prompt() { return 0; }
+read_tty() { IFS= read -r line <&3 || exit 1; printf '%s\n' "$line"; }
+exec 3< "$HOME/answers"
+free_macos_ctrl_space
+''')
+
+    def test_macos_ctrl_space_opens_settings_on_yes(self):
+        for answer in ('y', 'Y'):
+            self.hotkeys(True)
+            # An invalid answer asks again; Enter after the change continues.
+            output = self.ctrl_space(['maybe', answer, ''])
+            self.assertIn('Ctrl+Space for Herdr: verified', output)
+        self.assertEqual(self.calls(), ['open x-apple.systempreferences:com.apple.Keyboard-Settings.extension'] * 2)
+
+    def test_macos_ctrl_space_kept_on_no_or_eof(self):
+        for answers in (['n'], ['N'], []):
+            self.hotkeys(True)
+            output = self.ctrl_space(answers)
+            self.assertIn('kept bound by macOS at your choice', output)
+        self.assertEqual(self.calls(), [])
+
+    def test_macos_ctrl_space_free_or_noninteractive(self):
+        self.hotkeys(False)
+        output = self.ctrl_space([])
+        self.assertNotIn('Ctrl+Space', output)
+        # An absent entry is the enabled macOS default; CI only warns.
+        (self.home / 'hotkeys.plist').write_bytes(plistlib.dumps({'AppleSymbolicHotKeys': {}}))
+        output = self.run_shell('OS_TYPE=darwin; NON_INTERACTIVE=true\nread_tty() { exit 98; }\nfree_macos_ctrl_space')
+        self.assertIn('Ctrl+Space for Herdr: skipped — still bound by macOS', output)
+        self.assertEqual(self.calls(), [])
 
     def test_macos_ghostty_from_cask_and_external_app(self):
         fake_app = r"""fake_app() {

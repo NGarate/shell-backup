@@ -373,6 +373,7 @@ setup_herdr() {
     HERDR_READY=true
     record_result Herdr verified "${before:-absent} -> $(tool_version "$HERDR_BIN"); running sessions left intact"
     run_stage 'Herdr prefix' configure_herdr_prefix
+    [[ "$OS_TYPE" != darwin ]] || free_macos_ctrl_space
     run_stage 'Herdr attach helper' deploy_attach_helper
     setup_herdr_integrations
 }
@@ -424,6 +425,59 @@ fi
 exec herdr session attach "$session"
 ATTACH_EOF
     success "Attach helper deployed: ssh -t <host> shell-backup-attach [session]"
+}
+
+# macOS binds Ctrl+Space (space key code 49, Control modifier 262144) to
+# "Select the previous input source" (hotkey 60), which swallows Herdr's
+# prefix. An absent entry 60 means the system default, which is enabled.
+macos_ctrl_space_taken() {
+    defaults export com.apple.symbolichotkeys - 2>/dev/null | python3 -c '
+import plistlib, sys
+try:
+    hotkeys = plistlib.loads(sys.stdin.buffer.read()).get("AppleSymbolicHotKeys", {})
+except Exception:
+    hotkeys = {}
+if "60" not in hotkeys:
+    sys.exit(0)
+for entry in hotkeys.values():
+    parameters = entry.get("value", {}).get("parameters", [])
+    if entry.get("enabled") and len(parameters) == 3 and list(parameters[1:]) == [49, 262144]:
+        sys.exit(0)
+sys.exit(1)'
+}
+
+# Herdr keeps Ctrl+Space; offer to open Keyboard settings so the user can free
+# it now. Settings are never changed by the script.
+free_macos_ctrl_space() {
+    macos_ctrl_space_taken || return 0
+    warning 'macOS uses Ctrl+Space to switch input sources, so the Herdr prefix never reaches Ghostty.'
+    log 'To free it: System Settings > Keyboard > Keyboard Shortcuts… > Input Sources, uncheck "Select the previous input source".'
+    if ! can_prompt; then
+        record_result 'Ctrl+Space for Herdr' skipped 'still bound by macOS; free it in Keyboard Shortcuts'
+        return 0
+    fi
+    local answer
+    while true; do
+        prompt_tty 'Open Keyboard settings now? y = open and wait, n = continue without changing it [y/N]: '
+        answer="$TTY_ANSWER"
+        case "$answer" in
+            y|Y|n|N|'') break ;;
+        esac
+    done
+    if [[ "$answer" != [yY] ]]; then
+        record_result 'Ctrl+Space for Herdr' skipped 'kept bound by macOS at your choice'
+        return 0
+    fi
+    if ! open 'x-apple.systempreferences:com.apple.Keyboard-Settings.extension'; then
+        record_result 'Ctrl+Space for Herdr' skipped 'could not open System Settings'
+        return 0
+    fi
+    prompt_tty 'Click "Keyboard Shortcuts…", then Input Sources, uncheck "Select the previous input source", and press Enter here: '
+    if macos_ctrl_space_taken; then
+        record_result 'Ctrl+Space for Herdr' skipped 'still bound by macOS; rerun setup or free it in Keyboard Shortcuts'
+    else
+        record_result 'Ctrl+Space for Herdr' verified 'freed for Herdr'
+    fi
 }
 
 configure_herdr_prefix() {

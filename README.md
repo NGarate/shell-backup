@@ -104,6 +104,13 @@ client (default session `personal`). Press it, then `q`, to detach and
 leave pane processes running; `?` shows bindings. Reload Herdr's configuration or
 reattach after changing the prefix. `exit` closes the pane's shell.
 
+On macOS, Ctrl+Space selects the previous input source by default, so Herdr
+would never see it. While that shortcut is active, setup stops with a warning:
+`y` opens Keyboard settings and waits until you uncheck it (Keyboard Shortcuts…
+> Input Sources > "Select the previous input source", then Enter); `n` continues
+without opening or changing anything. CI runs only warn. Setup never edits
+macOS settings itself.
+
 After verifying Herdr, setup installs the missing OpenCode, Hermes, Codex and
 Claude Code integrations without asking, including in CI. A harness that is not
 installed or not yet initialized is skipped; a later run picks it up. Existing
