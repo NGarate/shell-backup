@@ -37,7 +37,7 @@ readonly YAZI_VERSION="26.9.1"
 
 # Non-interactive flag (will be parsed after functions are defined)
 NON_INTERACTIVE=false
-WITH_HERDR=false
+WITH_CMUX=false
 FONT_CHOICE=""
 HERDR_BIN=""
 HERDR_READY=false
@@ -84,12 +84,12 @@ parse_args() {
     for arg in "$@"; do
         case "$arg" in
             --ci|--non-interactive) NON_INTERACTIVE=true ;;
-            --with-herdr) WITH_HERDR=true ;;
+            --with-cmux) WITH_CMUX=true ;;
             --font=iosevka|--font=jetbrains) FONT_CHOICE="${arg#--font=}" ;;
             --font=*) error "Unknown font: ${arg#--font=} (use iosevka or jetbrains)" ;;
             --help|-h)
-                printf '%s\n' 'Usage: setup.sh [--ci|--non-interactive] [--with-herdr] [--font=iosevka|jetbrains]' \
-                    'Linux: Ghostty + Herdr. macOS: cmux; --with-herdr opts into Herdr.' \
+                printf '%s\n' 'Usage: setup.sh [--ci|--non-interactive] [--with-cmux] [--font=iosevka|jetbrains]' \
+                    'Ghostty + Herdr on Linux and macOS. --with-cmux adds cmux on macOS; an installed cmux stays managed.' \
                     'Terminal font: Iosevka Term SS05 (default) or JetBrainsMono Nerd Font; the choice is saved.'
                 exit 0 ;;
             *) error "Unknown option: $arg" ;;
@@ -341,13 +341,7 @@ find_herdr() {
 setup_herdr() {
     HERDR_READY=false
     HERDR_BIN=$(find_herdr || true)
-    local before
-    # macOS uses cmux by itself; Herdr is installed there only on request.
-    if [[ -z "$HERDR_BIN" && "$OS_TYPE" == darwin && "$WITH_HERDR" != true ]]; then
-        record_result Herdr skipped 'optional macOS component; pass --with-herdr'
-        return 0
-    fi
-    before=""
+    local before=""
     [[ -z "$HERDR_BIN" ]] || before=$(tool_version "$HERDR_BIN")
     if [[ -z "$HERDR_BIN" ]]; then
         if ! install_release_tool herdr "$HERDR_VERSION"; then
@@ -1294,13 +1288,43 @@ install_neovim_tools() {
     require_version tree-sitter "$TREE_SITTER_VERSION"
 }
 
-# The classic Snap tracks Ghostty's latest stable release and refreshes itself;
-# Ubuntu's apt package lags behind, so it is removed once the Snap works.
+find_ghostty_app() {
+    local app
+    for app in /Applications/Ghostty.app "$HOME/Applications/Ghostty.app"; do
+        if [[ -x "$app/Contents/MacOS/ghostty" ]]; then
+            printf '%s\n' "$app"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# The Ghostty this setup manages, not whichever one comes first on PATH.
+ghostty_bin() {
+    if [[ "$OS_TYPE" == darwin ]]; then
+        printf '%s\n' "$(find_ghostty_app || printf '/missing-ghostty')/Contents/MacOS/ghostty"
+    else
+        printf '%s\n' /snap/bin/ghostty
+    fi
+}
+
+# Linux: the classic Snap tracks Ghostty's latest stable release and refreshes
+# itself; Ubuntu's apt package lags behind, so it is removed once the Snap works.
+# macOS: the Homebrew cask; a Ghostty.app from the DMG keeps its own updater.
 install_ghostty() {
     local before
-    before=$(tool_version /snap/bin/ghostty)
+    before=$(tool_version "$(ghostty_bin)")
     if [[ -n "$before" ]] && version_gte "$before" "$GHOSTTY_VERSION"; then
-        success "Ghostty Snap retained ($before)"
+        success "Ghostty retained ($before)"
+    elif [[ "$OS_TYPE" == darwin ]]; then
+        if brew list --cask ghostty >/dev/null 2>&1; then
+            brew upgrade --cask ghostty || return 1
+        elif find_ghostty_app >/dev/null; then
+            warning 'Ghostty outside Homebrew is below target; update it using Ghostty > Check for Updates'
+            return 1
+        else
+            brew install --cask ghostty || return 1
+        fi
     else
         if ! command_exists snap; then
             run_with_sudo 'snapd prerequisite for Ghostty' apt-get install -y snapd || return 1
@@ -1311,8 +1335,8 @@ install_ghostty() {
             run_with_sudo 'Ghostty installation' snap install ghostty --classic --channel=latest/stable || return 1
         fi
     fi
-    require_version /snap/bin/ghostty "$GHOSTTY_VERSION" || return 1
-    if [[ "$(dpkg-query -W -f='${Status}' ghostty 2>/dev/null || true)" == 'install ok installed' ]]; then
+    require_version "$(ghostty_bin)" "$GHOSTTY_VERSION" || return 1
+    if [[ "$OS_TYPE" == linux && "$(dpkg-query -W -f='${Status}' ghostty 2>/dev/null || true)" == 'install ok installed' ]]; then
         run_with_sudo 'removal of the apt Ghostty package' apt-get remove -y ghostty || return 1
         success 'Removed the apt Ghostty package; the Snap is the only Ghostty'
     fi
@@ -1327,6 +1351,12 @@ find_cmux() {
         fi
     done
     return 1
+}
+
+# cmux is an optional macOS extra next to Ghostty: requested with --with-cmux,
+# and kept up to date once installed.
+cmux_wanted() {
+    [[ "$OS_TYPE" == darwin ]] && { [[ "$WITH_CMUX" == true ]] || find_cmux >/dev/null; }
 }
 
 install_cmux() {
@@ -2016,7 +2046,7 @@ deploy_ghostty_config() {
     esac
     if [[ "$OS_TYPE" == "darwin" ]]; then
         fullscreen_keybind="keybind = cmd+shift+f=toggle_fullscreen"
-        platform_config=$'# Shared rendering configuration read by cmux.\nfont-thicken = true'
+        platform_config=$'# macOS rendering, also read by cmux when installed.\nfont-thicken = true'
     else
         fullscreen_keybind="keybind = alt+shift+f=toggle_fullscreen"
         platform_config="# Linux: Ghostty state restore is macOS-only, so no window-save-state is set."
@@ -3535,15 +3565,12 @@ verify_installation() {
         name="${item%%:*}"; minimum="${item#*:}"
         check_versioned_cmd "$name" "$minimum" "$(tool_version "$name")"
     done
-    if [[ "$OS_TYPE" == linux ]]; then
-        check_versioned_cmd ghostty "$GHOSTTY_VERSION" "$(tool_version /snap/bin/ghostty)"
-    else
+    check_versioned_cmd ghostty "$GHOSTTY_VERSION" "$(tool_version "$(ghostty_bin)")"
+    if cmux_wanted; then
         check_path cmux "$(find_cmux || printf '/missing-cmux')"
     fi
     check_path 'Terminal rendering config' "$HOME/.config/ghostty/config"
-    if [[ "$OS_TYPE" == linux || "$HERDR_READY" == true || "$WITH_HERDR" == true ]]; then
-        check_versioned_cmd "${HERDR_BIN:-herdr}" "$HERDR_VERSION" "$(tool_version "${HERDR_BIN:-herdr}")"
-    fi
+    check_versioned_cmd "${HERDR_BIN:-herdr}" "$HERDR_VERSION" "$(tool_version "${HERDR_BIN:-herdr}")"
 
     check_path "Zinit" "$HOME/.local/share/zinit/zinit.git"
     check_path ".zshenv" "$HOME/.zshenv"
@@ -3663,12 +3690,13 @@ main() {
     run_stage Yazi install_yazi
     run_stage Neovim install_neovim
     run_stage 'Neovim tools' install_neovim_tools
-    if [[ "$OS_TYPE" == darwin ]]; then
+    run_stage Ghostty install_ghostty
+    if cmux_wanted; then
         run_stage cmux install_cmux
-        record_result Ghostty skipped 'macOS uses cmux; shared rendering config is deployed'
+    elif [[ "$OS_TYPE" == darwin ]]; then
+        record_result cmux skipped 'optional extra; pass --with-cmux'
     else
-        run_stage Ghostty install_ghostty
-        record_result cmux skipped 'Linux uses Ghostty'
+        record_result cmux skipped 'macOS only'
     fi
     setup_herdr
     run_stage Fonts install_fonts

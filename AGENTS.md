@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents (Codex, Claude Code, etc.) when 
 
 ## Project Overview
 
-`setup.sh` is a single-file script that provisions a development environment (zsh, Ghostty on Linux / cmux on macOS, Herdr, Starship, Yazi, fzf, etc.) on Apple Silicon macOS and apt-based Linux on amd64/arm64. It must keep working when piped via `curl | bash`, so every deployed config file is embedded in it as a heredoc.
+`setup.sh` is a single-file script that provisions a development environment (zsh, Ghostty and Herdr on both platforms plus optional cmux on macOS, Starship, Yazi, fzf, etc.) on Apple Silicon macOS and apt-based Linux on amd64/arm64. It must keep working when piped via `curl | bash`, so every deployed config file is embedded in it as a heredoc.
 
 The script is split into numbered sections (`grep -n '^# [0-9]*\. ' setup.sh`) whose stages run in order from `main()`. Target versions, checksums, plugin sources and what has or has not been validated are documented in `DEPENDENCIES.md`.
 

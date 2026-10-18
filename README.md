@@ -6,7 +6,7 @@ apt-based Linux (amd64/arm64). All desktop configuration is embedded in [setup.s
 ## Install
 
 Requires curl, Git, internet access and permission to install system packages.
-macOS requires version 14+ for cmux.
+The optional cmux extra requires macOS 14+.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ngarate/shell-backup/main/setup.sh | bash
@@ -14,14 +14,14 @@ curl -fsSL https://raw.githubusercontent.com/ngarate/shell-backup/main/setup.sh 
 # Or from a local clone:
 bash setup.sh
 bash setup.sh --ci             # No optional prompts; also --non-interactive
-bash setup.sh --with-herdr     # Opt into Herdr on macOS
+bash setup.sh --with-cmux      # Also install cmux on macOS (kept updated once installed)
 bash setup.sh --font=jetbrains # Terminal font: iosevka (default) or jetbrains
 ```
 
-| Platform | Terminal | Persistent sessions |
-|---|---|---|
-| Linux | Ghostty | Herdr |
-| macOS arm64 | cmux | None by default; Herdr only with `--with-herdr` (never started automatically in cmux) |
+| Platform | Terminal | Persistent sessions | Extra |
+|---|---|---|---|
+| Linux | Ghostty (Snap) | Herdr | — |
+| macOS arm64 | Ghostty (Homebrew cask) | Herdr | cmux with `--with-cmux` |
 
 Both profiles install zsh with Zinit, Starship, Yazi with Git/Starship plugins,
 fzf, zoxide, ripgrep, fd, NVM/Node, pnpm, mosh-server, [Neovim](#neovim) with

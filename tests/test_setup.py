@@ -233,20 +233,8 @@ setup_herdr
 ''')
         self.assertIn('Herdr: failed', output)
 
-    def test_macos_optional_and_existing(self):
-        # Even with a terminal that would answer yes, macOS never asks.
-        output = self.run_shell('''OS_TYPE=darwin
-can_prompt() { return 0; }
-read_tty() { exit 98; }
-find_herdr() { return 1; }
-install_release_tool() { exit 98; }
-setup_herdr
-''')
-        self.assertIn('Herdr: skipped — optional macOS component; pass --with-herdr', output)
-        self.run_shell('OS_TYPE=darwin; NON_INTERACTIVE=true\nsetup_herdr\n[[ "$HERDR_READY" == true ]]')
-
-    def test_macos_explicit_opt_in(self):
-        self.run_shell('''OS_TYPE=darwin; NON_INTERACTIVE=true; WITH_HERDR=true
+    def test_macos_installs_herdr_like_linux(self):
+        self.run_shell('''OS_TYPE=darwin; NON_INTERACTIVE=true
 find_herdr() { return 1; }
 install_release_tool() { echo installed > "$HOME/installed"; }
 setup_herdr
@@ -574,6 +562,30 @@ shell_backup_update_zinit
         self.assertNotIn('snippets', output)
         self.run_shell('rm "$HOME/.zsh/zinit-update.zsh"; ! verify_zinit_assets')
 
+    def test_macos_ghostty_from_cask_and_external_app(self):
+        fake_app = r"""fake_app() {
+    mkdir -p "$HOME/Applications/Ghostty.app/Contents/MacOS"
+    printf '#!/bin/bash\necho "Ghostty %s"\n' "$1" > "$HOME/Applications/Ghostty.app/Contents/MacOS/ghostty"
+    chmod +x "$HOME/Applications/Ghostty.app/Contents/MacOS/ghostty"
+}
+OS_TYPE=darwin
+"""
+        self.run_shell(fake_app + """brew() {
+    echo "brew $*" >> "$CALLS"
+    [[ "$1" == install ]] || return 1
+    fake_app 1.3.1
+}
+install_ghostty
+install_ghostty
+""")
+        # The second run keeps the cask's Ghostty without calling Homebrew.
+        self.assertEqual(self.calls(), ['brew list --cask ghostty', 'brew install --cask ghostty'])
+        output = self.run_shell(fake_app + """fake_app 1.2.0
+brew() { [[ "$1" == list ]] && return 1; exit 98; }
+! install_ghostty
+""")
+        self.assertIn('Ghostty outside Homebrew is below target', output)
+
     def test_macos_old_os_blocks_native_terminal(self):
         output = self.run_shell("""OS_TYPE=darwin
 sw_vers() { echo 13.7; }
@@ -583,17 +595,20 @@ brew() { exit 98; }
         self.assertIn('requires macOS 14+', output)
 
     def test_main_profiles_and_failed_summary(self):
-        for platform, terminal, omitted in [('linux', 'Ghostty', 'cmux'), ('darwin', 'cmux', 'Ghostty')]:
+        for platform, flags, cmux in [('linux', '', 'skipped — macOS only'),
+                                      ('darwin', '', 'skipped — optional extra'),
+                                      ('darwin', ' --with-cmux', 'verified')]:
             output = self.run_shell(f"""detect_platform() {{ OS_TYPE={platform}; ARCH=arm64; PKG_MANAGER=apt; }}
 check_prerequisites() {{ :; }}
 setup_package_manager() {{ :; }}
 version_inventory() {{ echo 'fixture: 1.0 -> 2.0'; }}
 run_stage() {{ record_result "$1" verified; }}
 setup_herdr() {{ record_result Herdr skipped 'fixture'; }}
-main --ci
+find_cmux() {{ return 1; }}
+main --ci{flags}
 """)
-            self.assertIn(terminal + ': verified', output)
-            self.assertIn(omitted + ': skipped', output)
+            self.assertIn('Ghostty: verified', output)
+            self.assertIn('cmux: ' + cmux, output)
         output = self.run_shell("""record_result Ghostty failed 'fixture'
 print_summary
 [[ "$SETUP_FAILED" == true ]]
