@@ -1294,15 +1294,13 @@ install_neovim_tools() {
     require_version tree-sitter "$TREE_SITTER_VERSION"
 }
 
+# The classic Snap tracks Ghostty's latest stable release and refreshes itself;
+# Ubuntu's apt package lags behind, so it is removed once the Snap works.
 install_ghostty() {
     local before
-    before=$(tool_version ghostty)
+    before=$(tool_version /snap/bin/ghostty)
     if [[ -n "$before" ]] && version_gte "$before" "$GHOSTTY_VERSION"; then
-        success "Ghostty retained ($before)"
-        return 0
-    fi
-    if apt-cache show ghostty >/dev/null 2>&1; then
-        run_with_sudo 'Ghostty apt installation' apt-get install -y ghostty || return 1
+        success "Ghostty Snap retained ($before)"
     else
         if ! command_exists snap; then
             run_with_sudo 'snapd prerequisite for Ghostty' apt-get install -y snapd || return 1
@@ -1313,7 +1311,11 @@ install_ghostty() {
             run_with_sudo 'Ghostty installation' snap install ghostty --classic --channel=latest/stable || return 1
         fi
     fi
-    require_version ghostty "$GHOSTTY_VERSION"
+    require_version /snap/bin/ghostty "$GHOSTTY_VERSION" || return 1
+    if [[ "$(dpkg-query -W -f='${Status}' ghostty 2>/dev/null || true)" == 'install ok installed' ]]; then
+        run_with_sudo 'removal of the apt Ghostty package' apt-get remove -y ghostty || return 1
+        success 'Removed the apt Ghostty package; the Snap is the only Ghostty'
+    fi
 }
 
 find_cmux() {
@@ -3534,7 +3536,7 @@ verify_installation() {
         check_versioned_cmd "$name" "$minimum" "$(tool_version "$name")"
     done
     if [[ "$OS_TYPE" == linux ]]; then
-        check_versioned_cmd ghostty "$GHOSTTY_VERSION" "$(tool_version ghostty)"
+        check_versioned_cmd ghostty "$GHOSTTY_VERSION" "$(tool_version /snap/bin/ghostty)"
     else
         check_path cmux "$(find_cmux || printf '/missing-cmux')"
     fi
