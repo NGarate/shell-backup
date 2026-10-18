@@ -65,61 +65,44 @@ esac
         path = self.home / 'calls'
         return path.read_text().splitlines() if path.exists() else []
 
-    def choose(self, choice, extra=''):
-        return self.run_shell('can_prompt() { return 0; }\nread_tty() { printf "%s\\n" ' + shlex.quote(choice) + '; }\n' + extra + '\nsetup_herdr_integrations\n')
+    def integrations(self, extra=''):
+        # A prompt would fail the run: integrations are installed without asking.
+        return self.run_shell('read_tty() { exit 98; }\n' + extra + '\nsetup_herdr_integrations\n')
 
     def test_source_has_no_side_effects(self):
         self.run_shell(':')
         self.assertFalse((self.home / '.setup.log').exists())
 
-    def test_partial_and_repeat(self):
-        self.choose('1 3 1')
-        self.assertEqual(self.calls(), ['opencode', 'codex'])
-        # Second list has only Hermes and Claude. Existing installs preserved.
-        output = self.choose('2')
-        self.assertEqual(self.calls(), ['opencode', 'codex', 'claude'])
+    def test_installs_all_missing_then_preserves(self):
+        self.integrations()
+        self.assertEqual(self.calls(), ['opencode', 'hermes', 'codex', 'claude'])
+        output = self.integrations()
+        self.assertEqual(len(self.calls()), 4)
         self.assertIn('preserved', output)
 
-    def test_none_cancel_invalid(self):
-        for choice in ('', '  ', '*', 'q', 'cancel', '1 9', '01', '1; touch nope'):
-            self.choose(choice)
-        self.assertEqual(self.calls(), [])
-
-    def test_all(self):
-        self.choose('all')
+    def test_noninteractive_and_no_tty_still_install(self):
+        self.run_shell('parse_args --ci\nread_tty() { exit 98; }\nsetup_herdr_integrations', start_new_session=True)
         self.assertEqual(self.calls(), ['opencode', 'hermes', 'codex', 'claude'])
 
     def test_missing_harness(self):
         (self.bin / 'codex').unlink()
-        output = self.choose('3')
-        self.assertEqual(self.calls(), [])
+        output = self.integrations()
+        self.assertEqual(self.calls(), ['opencode', 'hermes', 'claude'])
         self.assertIn('harness or its initialized configuration is absent', output)
 
-    def test_failed_integration_continues_requires_new_selection(self):
+    def test_failed_integration_continues_and_retries_on_rerun(self):
         self.env['FAIL_TARGET'] = 'opencode'
-        output = self.choose('1 2')
-        self.assertEqual(self.calls(), ['opencode', 'hermes'])
+        output = self.integrations()
+        self.assertEqual(self.calls(), ['opencode', 'hermes', 'codex', 'claude'])
         self.assertIn('Herdr/opencode: failed', output)
-        self.choose('')
-        self.assertEqual(self.calls(), ['opencode', 'hermes'])
         self.env.pop('FAIL_TARGET')
-        self.choose('1')
+        self.integrations()
         self.assertEqual(self.calls()[-1], 'opencode')
-
-    def test_noninteractive_and_no_tty(self):
-        for flag in ('--ci', '--non-interactive'):
-            self.run_shell(f'parse_args {flag}\nread_tty() {{ exit 98; }}\nsetup_herdr_integrations')
-        self.run_shell('setup_herdr_integrations', start_new_session=True)
-        self.assertEqual(self.calls(), [])
-
-    def test_all_installed_no_selector(self):
-        self.choose('all')
-        self.run_shell('read_tty() { exit 98; }\nsetup_herdr_integrations')
-        self.assertEqual(len(self.calls()), 4)
+        self.assertEqual(len(self.calls()), 5)
 
     def test_unknown_and_outdated_preserved(self):
         (self.home / 'status').write_text('opencode: current (v2) (/mock)\nhermes: future protocol\ncodex: outdated (v1 < v2) (/mock)\nclaude: needs repair (v2) (/mock)\n')
-        output = self.choose('all')
+        output = self.integrations()
         self.assertEqual(self.calls(), [])
         self.assertIn('state indeterminate', output)
         self.assertIn('preserved', output)
@@ -127,7 +110,7 @@ esac
 
     def test_status_failure(self):
         self.env['STATUS_FAIL'] = '1'
-        output = self.choose('all')
+        output = self.integrations()
         self.assertEqual(self.calls(), [])
         self.assertIn('indeterminate', output)
 
@@ -154,7 +137,8 @@ esac
         self.run_shell('configure_herdr_prefix')
         self.assertEqual(config.stat().st_mtime_ns, before)
         self.assertFalse((self.home / '.backup').exists())
-        self.assertEqual(self.calls(), [])  # No server or integration mutation.
+        # Only the four integration installers ran; no server commands.
+        self.assertEqual(self.calls(), ['opencode', 'hermes', 'codex', 'claude'])
 
     def test_herdr_prefix_preserves_other_settings_comments_and_permissions(self):
         config = self.home / '.config/herdr/config.toml'
@@ -210,10 +194,10 @@ command = "echo hello"
             output = self.run_shell('NON_INTERACTIVE=true\nsetup_herdr\n[[ "$SETUP_FAILED" == true ]]')
             self.assertEqual(config.read_text(), original)
             self.assertIn('Herdr prefix: failed', output)
-            self.assertIn('Herdr/opencode: skipped', output)
+            self.assertIn('Herdr/opencode: installed', output)
         self.assertFalse((self.home / '.backup').exists())
 
-    def test_fresh_linux_ci_installs_herdr_without_integrations(self):
+    def test_fresh_linux_ci_installs_herdr_and_integrations(self):
         (self.bin / 'herdr').rename(self.home / 'herdr-template')
         output = self.run_shell('''NON_INTERACTIVE=true
 find_herdr() { [[ -x "$HOME/.local/bin/herdr" ]] && echo "$HOME/.local/bin/herdr"; }
@@ -222,7 +206,7 @@ setup_herdr
 [[ "$HERDR_READY" == true ]]
 ''')
         self.assertIn('Herdr: verified', output)
-        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.calls(), ['opencode', 'hermes', 'codex', 'claude'])
 
     def test_fresh_failed_installation(self):
         output = self.run_shell('''find_herdr() { return 1; }
@@ -241,7 +225,7 @@ setup_herdr
 [[ "$HERDR_READY" == true ]]
 ''')
         self.assertTrue((self.home / 'installed').exists())
-        self.assertEqual(self.calls(), [])
+        self.assertEqual(len(self.calls()), 4)
 
     def test_version_retention_and_failure(self):
         self.executable('fzf', '#!/bin/bash\necho "0.99.0"\n')
@@ -414,7 +398,7 @@ keep_snapshot_if_changed "$HOME/.config/yazi/missing.toml" ""
         self.assertNotIn('# upgraded', backups[0].read_text())
         # The mock Herdr installer leaves settings.json unchanged: no backup.
         (self.home / '.claude/settings.json').write_text('{}\n')
-        self.choose('4')
+        self.run_shell('install_herdr_integration claude')
         self.assertEqual(self.calls(), ['claude'])
         self.assertEqual(len(list((self.home / '.backup').iterdir())), 1)
 
@@ -928,20 +912,20 @@ release_asset herdr darwin arm64 >/dev/null
         self.assertEqual(sorted(p.read_text() for p in (self.home / '.backup').iterdir()), ['one\n', 'two\n'])
 
     def test_pipe_with_controlling_terminal(self):
-        self.pipe_selector(b'1 3\n', ['opencode', 'codex'])
+        self.pipe_prompt(b'2\n', 'jetbrains')
 
     def test_ctrl_c_cancels_without_consuming_pipe(self):
-        self.pipe_selector(b'\x03', [])
+        self.pipe_prompt(b'\x03', 'iosevka')
 
     def test_eof_cancels_without_consuming_pipe(self):
-        self.pipe_selector(b'\x04', [])
+        self.pipe_prompt(b'\x04', 'iosevka')
 
-    def pipe_selector(self, answer, expected):
-        # stdin carries shell code, while the selector must read its answer
-        # through /dev/tty. The trailing command must still be interpreted.
+    def pipe_prompt(self, answer, expected):
+        # stdin carries shell code, while the font question must read its
+        # answer through /dev/tty. The trailing command must still be interpreted.
         pid, master = pty.fork()
         if pid == 0:
-            code = self.base + 'setup_herdr_integrations\necho PIPE_CONTENT_SURVIVED\n'
+            code = self.base + 'resolve_font_choice\necho "CHOSEN=$FONT_CHOICE"\necho PIPE_CONTENT_SURVIVED\n'
             producer = 'printf %s ' + shlex.quote(code) + ' | bash'
             os.execve('/bin/bash', ['bash', '-c', producer], self.env)
         output = b''
@@ -957,7 +941,7 @@ release_asset herdr darwin arm64 >/dev/null
                     if not chunk:
                         break
                     output += chunk
-                    if b'Enter numbers' in output and not answered:
+                    if b'Choose 1-2' in output and not answered:
                         os.write(master, answer)
                         answered = True
                 result, status = os.waitpid(pid, os.WNOHANG)
@@ -966,7 +950,7 @@ release_asset herdr darwin arm64 >/dev/null
                     break
             self.assertTrue(answered, output.decode())
             self.assertIn(b'PIPE_CONTENT_SURVIVED', output)
-            self.assertEqual(self.calls(), expected)
+            self.assertIn(b'CHOSEN=' + expected.encode(), output)
         finally:
             os.close(master)
             if pid:

@@ -104,11 +104,10 @@ client (default session `personal`). Press it, then `q`, to detach and
 leave pane processes running; `?` shows bindings. Reload Herdr's configuration or
 reattach after changing the prefix. `exit` closes the pane's shell.
 
-After verifying Herdr, interactive setup offers missing OpenCode, Hermes, Codex
-and Claude Code integrations. Select numbers, `all`, or Enter/`q` to skip.
-Harnesses and their initialized configurations must already exist. Existing
+After verifying Herdr, setup installs the missing OpenCode, Hermes, Codex and
+Claude Code integrations without asking, including in CI. A harness that is not
+installed or not yet initialized is skipped; a later run picks it up. Existing
 integrations are preserved; unknown or outdated states are reported for review.
-CI and runs without a controlling terminal skip this selector.
 
 ## Remote clients
 

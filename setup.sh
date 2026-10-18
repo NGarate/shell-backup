@@ -515,7 +515,7 @@ HERDR_CONFIG_EOF
     log 'Herdr prefix: Ctrl+Space. Reload config in Herdr or reattach the client to apply.'
 }
 
-# Herdr 0.8.2 provides all four installers, but none of these four optional
+# Herdr 0.8.2 provides all four installers, but none of these four
 # session/lifecycle integrations is active merely by installing Herdr itself.
 # Official protocol: src/cli/integration.rs at v0.8.2 (no server required).
 integration_state() {
@@ -545,7 +545,7 @@ integration_home() {
 
 install_herdr_integration() {
     local target="$1" directory snapshot state index
-    # Re-check immediately before mutation, including selections made minutes ago.
+    # Re-check immediately before mutation.
     if ! snapshot=$("$HERDR_BIN" integration status 2>/dev/null); then
         record_result "Herdr/$target" skipped 'state indeterminate'
         return 0
@@ -579,7 +579,7 @@ install_herdr_integration() {
         keep_snapshot_if_changed "${files[index]}" "${snapshots[index]}"
     done
     if [[ "$install_status" != 0 ]]; then
-        record_result "Herdr/$target" failed 'official installer failed; retry requires a new selection'
+        record_result "Herdr/$target" failed 'official installer failed; rerun setup to retry'
         return 0
     fi
     if snapshot=$("$HERDR_BIN" integration status 2>/dev/null) && \
@@ -590,72 +590,22 @@ install_herdr_integration() {
     fi
 }
 
+# Every missing integration whose harness is initialized is installed without
+# asking; existing ones (current, outdated or unknown) are never rewritten.
 setup_herdr_integrations() {
     [[ "$HERDR_READY" == true ]] || return 0
-    local snapshot target state choice token index found
-    local pending=() selected=() tokens=()
+    local snapshot target
     if ! snapshot=$("$HERDR_BIN" integration status 2>/dev/null); then
         record_result 'Herdr integrations' skipped 'state indeterminate; status command unavailable or failed'
         return 0
     fi
     for target in opencode hermes codex claude; do
-        state=$(integration_state "$target" "$snapshot")
-        case "$state" in
-            missing) pending+=("$target") ;;
+        case "$(integration_state "$target" "$snapshot")" in
+            missing) install_herdr_integration "$target" ;;
             installed) record_result "Herdr/$target" installed 'preserved' ;;
             incompatible) record_result "Herdr/$target" blocked 'existing integration outdated or needs repair; preserved' ;;
             *) record_result "Herdr/$target" skipped 'state indeterminate; preserved' ;;
         esac
-    done
-    [[ ${#pending[@]} -gt 0 ]] || return 0
-    if ! can_prompt; then
-        for target in "${pending[@]}"; do
-            record_result "Herdr/$target" skipped 'non-interactive or no controlling terminal'
-        done
-        return 0
-    fi
-    local menu=$'Optional Herdr integrations (none selected):\n'
-    for ((index=0; index<${#pending[@]}; index++)); do
-        menu+="$((index+1))) ${pending[index]}"$'\n'
-    done
-    menu+=$'Enter numbers separated by spaces, all, or Enter/q to skip: '
-    prompt_tty "$menu"
-    choice="$TTY_ANSWER"
-    case "$choice" in
-        ''|q|Q|cancel) ;;
-        all) selected=("${pending[@]}") ;;
-        *)
-            read -r -a tokens <<< "$choice"
-            if [[ ${#tokens[@]} -gt 0 ]]; then
-                for token in "${tokens[@]}"; do
-                    if [[ ! "$token" =~ ^[1-4]$ ]] || ((token > ${#pending[@]})); then
-                        selected=()
-                        warning 'Invalid selection; no integrations selected'
-                        break
-                    fi
-                    target="${pending[token-1]}"
-                    found=false
-                    if [[ ${#selected[@]} -gt 0 ]]; then
-                        for state in "${selected[@]}"; do
-                            [[ "$state" != "$target" ]] || found=true
-                        done
-                    fi
-                    [[ "$found" == true ]] || selected+=("$target")
-                done
-            fi ;;
-    esac
-    for target in "${pending[@]}"; do
-        found=false
-        if [[ ${#selected[@]} -gt 0 ]]; then
-            for state in "${selected[@]}"; do
-                [[ "$state" != "$target" ]] || found=true
-            done
-        fi
-        if [[ "$found" == true ]]; then
-            install_herdr_integration "$target"
-        else
-            record_result "Herdr/$target" skipped 'not selected'
-        fi
     done
 }
 
