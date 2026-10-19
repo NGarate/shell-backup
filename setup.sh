@@ -1315,6 +1315,19 @@ install_neovim() {
         ) || return 1
     fi
     mkdir -p "$HOME/.local/bin" || return 1
+    # `ln -sfn` into a real directory would create the link inside it: a manual
+    # unpack at ~/.local/opt/nvim is moved into the backup directory first, and
+    # a real ~/.local/bin/nvim is backed up before the link replaces it.
+    if [[ -e "$opt/nvim" && ! -L "$opt/nvim" ]]; then
+        local aside
+        mkdir -p "$BACKUP_DIR" || return 1
+        aside=$(backup_path "$opt/nvim")
+        mv "$opt/nvim" "$aside" || return 1
+        warning "Moved the unmanaged $opt/nvim to $aside"
+    fi
+    if [[ -e "$HOME/.local/bin/nvim" && ! -L "$HOME/.local/bin/nvim" ]]; then
+        backup_file "$HOME/.local/bin/nvim"
+    fi
     ln -sfn "$target" "$opt/nvim" || return 1
     ln -sfn "$opt/nvim/bin/nvim" "$HOME/.local/bin/nvim" || return 1
     hash -r
@@ -3222,7 +3235,21 @@ deploy_neovim_launchers() {
 # vi: Neovim with the config named in NVIM_CONFIG (default nvim-lazyvim),
 # passed as NVIM_APPNAME. Configs: ~/.config/nvim-lazyvim, ~/.config/nvim-kickstart.
 # Example: NVIM_CONFIG=nvim-kickstart vi file.txt
-exec env NVIM_APPNAME="${NVIM_CONFIG:-nvim-lazyvim}" nvim "$@"
+# The managed Neovim comes first, so callers with a minimal PATH (GUI apps,
+# cron, launchd) still get it; without any nvim the system vi opens instead.
+for nvim in "$HOME/.local/opt/nvim/bin/nvim" /opt/homebrew/bin/nvim nvim; do
+    case "$nvim" in
+        */*) [ -x "$nvim" ] || continue ;;
+        *) command -v "$nvim" >/dev/null 2>&1 || continue ;;
+    esac
+    NVIM_APPNAME="${NVIM_CONFIG:-nvim-lazyvim}" exec "$nvim" "$@"
+done
+echo 'vi: nvim not found (run setup.sh); opening the system vi' >&2
+for editor in /usr/bin/vim /usr/bin/vi /bin/vi; do
+    [ -x "$editor" ] && exec "$editor" "$@"
+done
+echo 'vi: no editor found' >&2
+exit 127
 NVIM_VI_EOF
 
     deploy_file "$HOME/.zsh/nvim.zsh" 644 << 'NVIM_ZSH_EOF'
@@ -3259,11 +3286,32 @@ NVIM_ZSH_EOF
 # Git opens Neovim through vi (so NVIM_CONFIG applies) for commit messages,
 # `git mergetool` and `git difftool`. Only keys with another value are
 # written, and ~/.gitconfig is backed up only when Git changed it.
+# The Neovim the vi launcher runs: the managed tree, Homebrew, then PATH.
+launcher_nvim() {
+    local candidate
+    for candidate in "$HOME/.local/opt/nvim/bin/nvim" /opt/homebrew/bin/nvim nvim; do
+        if [[ "$candidate" == */* ]]; then
+            [[ -x "$candidate" ]] || continue
+        else
+            command_exists "$candidate" || continue
+        fi
+        printf '%s\n' "$candidate"
+        return 0
+    done
+    return 1
+}
+
+# Git settings point at the vi launcher only once it has a Neovim that meets
+# the target; otherwise the stage is skipped and Git keeps its own editor.
 configure_git_editor() {
     command_exists git || return 1
-    local vi="$HOME/.local/bin/vi" style=diff3 file="$HOME/.gitconfig"
+    local vi="$HOME/.local/bin/vi" style=diff3 file="$HOME/.gitconfig" nvim
     local xdg_file="${XDG_CONFIG_HOME:-$HOME/.config}/git/config" entry snapshot status=0
     local pending=()
+    if ! nvim=$(launcher_nvim) || ! version_gte "$(tool_version "$nvim")" "$NEOVIM_VERSION"; then
+        warning "Git editor: no Neovim $NEOVIM_VERSION for the vi launcher; Git settings left alone"
+        return 3
+    fi
     # zdiff3 (Git 2.35+) moves lines common to both sides out of the conflict.
     if version_gte "$(tool_version git)" 2.35; then
         style=zdiff3

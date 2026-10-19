@@ -75,6 +75,10 @@ nvims file       # Pick one with fzf
 `git difftool`) and Yazi (text and code files) open Neovim through it, so
 `NVIM_CONFIG` decides the config everywhere. Set another default in
 `~/.zshrc.local` or `~/.env`; plain `nvim` still uses `~/.config/nvim`.
+The launcher runs the Neovim that setup manages (`~/.local/opt/nvim` on
+Linux, Homebrew on macOS) before looking at `PATH`, so GUI apps and cron jobs
+get the same one, and it falls back to the system `vi` when Neovim is missing.
+Git is pointed at it only once a Neovim that meets the target is installed.
 
 Both configs add the same Git workflow: gitsigns, lazygit (`<leader>gg`) and
 diffview (`<leader>gv` for changes and 3-way conflict resolution, `<leader>gV`

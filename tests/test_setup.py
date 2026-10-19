@@ -348,6 +348,7 @@ configure_git_editor
         if not (self.bin / 'fc-cache').exists():
             self.executable('fc-cache', '#!/bin/bash\necho run >> "$HOME/fc-cache.calls"\n')
             self.executable('fc-list', '#!/bin/bash\necho Fixture\n')
+            self.executable('nvim', '#!/bin/bash\necho "NVIM v0.12.6"\n')
         self.run_shell(self.OFFLINE_STAGES)
 
     def test_rerun_with_same_inputs_changes_nothing(self):
@@ -844,6 +845,22 @@ release_asset herdr darwin arm64 >/dev/null
         self.assertIn('nvim retained (0.12.6)', self.run_shell('retry() { exit 98; }\ninstall_neovim'))
         (self.bin / 'nvim').unlink()
         self.run_shell(manifest + 'retry() { exit 98; }\ninstall_neovim\n[[ "$(tool_version nvim)" == 0.12.6 ]]')
+        # A manual unpack at ~/.local/opt/nvim and a real ~/.local/bin/nvim are
+        # moved out of the way instead of being linked into or overwritten.
+        (opt / 'nvim').unlink()
+        (opt / 'nvim/bin').mkdir(parents=True)
+        (opt / 'nvim/bin/nvim').write_text('#!/bin/bash\necho "NVIM v0.9.5"\n')
+        (opt / 'nvim/bin/nvim').chmod(0o755)
+        (self.bin / 'nvim').unlink()
+        (self.bin / 'nvim').write_text('#!/bin/bash\necho "NVIM v0.9.5"\n')
+        (self.bin / 'nvim').chmod(0o755)
+        output = self.run_shell(manifest + 'retry() { exit 98; }\ninstall_neovim\n[[ "$(tool_version nvim)" == 0.12.6 ]]')
+        self.assertIn('Moved the unmanaged', output)
+        self.assertEqual(os.readlink(opt / 'nvim'), str(opt / 'nvim-0.12.6'))
+        self.assertEqual(os.readlink(self.bin / 'nvim'), str(opt / 'nvim/bin/nvim'))
+        backups = sorted(p.name for p in (self.home / '.backup').iterdir())
+        self.assertEqual([b.split('.backup.')[0] for b in backups], ['nvim', 'nvim'])
+        self.assertTrue(any((self.home / '.backup' / b / 'bin/nvim').exists() for b in backups))
 
     def test_vi_launcher_follows_nvim_config(self):
         self.executable('nvim', '#!/bin/bash\necho "$NVIM_APPNAME $*"\n')
@@ -860,6 +877,19 @@ release_asset herdr darwin arm64 >/dev/null
                                     text=True, capture_output=True, timeout=10)
             self.assertEqual(result.stdout, "nvim-lazyvim nano\nkv='NVIM_CONFIG=nvim-kickstart vi'\nnvim-kickstart x\n",
                              result.stderr)
+        # The managed tree wins over PATH, and a minimal PATH still finds it.
+        managed = self.home / '.local/opt/nvim/bin'
+        managed.mkdir(parents=True)
+        (managed / 'nvim').write_text('#!/bin/bash\necho "managed $NVIM_APPNAME $*"\n')
+        (managed / 'nvim').chmod(0o755)
+        result = subprocess.run([vi, 'f'], env=dict(self.env, PATH='/usr/bin:/bin'), text=True, capture_output=True)
+        self.assertEqual(result.stdout, 'managed nvim-lazyvim f\n')
+        # Without any nvim the launcher says so and falls back to the system vi.
+        shutil.rmtree(self.home / '.local/opt')
+        (self.bin / 'nvim').unlink()
+        result = subprocess.run([vi, '-es', '-c', 'q'], env=dict(self.env, PATH='/usr/bin:/bin'), text=True,
+                                capture_output=True, input='', timeout=10)
+        self.assertIn('vi: nvim not found', result.stderr)
 
     def test_yazi_edit_opener_uses_vi_launcher(self):
         import tomllib
@@ -879,7 +909,19 @@ release_asset herdr darwin arm64 >/dev/null
     def git_get(self, key):
         return self.run_shell(f'git config --global --get {key}').strip()
 
+    def test_git_editor_skipped_without_a_target_neovim(self):
+        gitconfig = self.home / '.gitconfig'
+        gitconfig.write_text('[user]\n\tname = Someone\n')
+        for nvim in (None, '#!/bin/bash\necho "NVIM v0.11.0"\n'):
+            if nvim:
+                self.executable('nvim', nvim)
+            output = self.run_shell('run_stage "Git editor" configure_git_editor')
+            self.assertIn('Git editor: skipped', output)
+        self.assertEqual(gitconfig.read_text(), '[user]\n\tname = Someone\n')
+        self.assertFalse((self.home / '.backup').exists())
+
     def test_git_editor_settings_converge_and_back_up_once(self):
+        self.executable('nvim', '#!/bin/bash\necho "NVIM v0.12.6"\n')
         gitconfig = self.home / '.gitconfig'
         gitconfig.write_text('[user]\n\tname = Someone\n[merge]\n\ttool = meld\n')
         self.run_shell('configure_git_editor')
@@ -902,6 +944,7 @@ release_asset herdr darwin arm64 >/dev/null
         self.assertEqual(self.git_get('merge.conflictstyle'), 'diff3')
 
     def test_git_editor_uses_xdg_config_when_it_is_the_only_one(self):
+        self.executable('nvim', '#!/bin/bash\necho "NVIM v0.12.6"\n')
         xdg = self.home / '.config/git/config'
         xdg.parent.mkdir(parents=True)
         xdg.write_text('[user]\n\tname = Someone\n')
