@@ -15,6 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/ngarate/shell-backup/main/setup.sh 
 bash setup.sh
 bash setup.sh --ci             # No optional prompts; also --non-interactive
 bash setup.sh --with-cmux      # Also install cmux on macOS (kept updated once installed)
+# --with-herdr is accepted and ignored: Herdr is installed on both platforms
 bash setup.sh --font=jetbrains # Terminal font: iosevka (default) or jetbrains
 ```
 

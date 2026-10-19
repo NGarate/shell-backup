@@ -85,11 +85,13 @@ parse_args() {
         case "$arg" in
             --ci|--non-interactive) NON_INTERACTIVE=true ;;
             --with-cmux) WITH_CMUX=true ;;
+            # Herdr is installed on both platforms now; old invocations keep working.
+            --with-herdr) warning '--with-herdr is no longer needed and is ignored (Herdr is installed by default)' ;;
             --font=iosevka|--font=jetbrains) FONT_CHOICE="${arg#--font=}" ;;
             --font=*) error "Unknown font: ${arg#--font=} (use iosevka or jetbrains)" ;;
             --help|-h)
                 printf '%s\n' 'Usage: setup.sh [--ci|--non-interactive] [--with-cmux] [--font=iosevka|jetbrains]' \
-                    'Ghostty + Herdr on Linux and macOS. --with-cmux adds cmux on macOS; an installed cmux stays managed.' \
+                    'Ghostty + Herdr on Linux and macOS. --with-cmux adds cmux on macOS; an installed cmux stays managed; --with-herdr is accepted and ignored.' \
                     'Terminal font: Iosevka Term SS05 (default) or JetBrainsMono Nerd Font; the choice is saved.'
                 exit 0 ;;
             *) error "Unknown option: $arg" ;;
@@ -1360,20 +1362,40 @@ find_ghostty_app() {
     return 1
 }
 
-# The Ghostty this setup manages, not whichever one comes first on PATH.
+# The Ghostty this setup manages: the app bundle on macOS; on Linux the Snap
+# when present, otherwise whichever ghostty is on PATH (apt, a local build).
 ghostty_bin() {
     if [[ "$OS_TYPE" == darwin ]]; then
         printf '%s\n' "$(find_ghostty_app || printf '/missing-ghostty')/Contents/MacOS/ghostty"
+    elif [[ -x "$GHOSTTY_SNAP_BIN" ]]; then
+        printf '%s\n' "$GHOSTTY_SNAP_BIN"
     else
-        printf '%s\n' /snap/bin/ghostty
+        command -v ghostty 2>/dev/null || printf '%s\n' /missing-ghostty
     fi
 }
 
-# Linux: the classic Snap tracks Ghostty's latest stable release and refreshes
-# itself; Ubuntu's apt package lags behind, so it is removed once the Snap works.
+# Where the classic Snap puts its command (tests point this at a mock).
+GHOSTTY_SNAP_BIN="${GHOSTTY_SNAP_BIN:-/snap/bin/ghostty}"
+
+# snapd is reachable (installed and its daemon answering), which WSL without
+# systemd and containers lack even after `apt-get install snapd`.
+snapd_available() {
+    command_exists snap && snap version 2>/dev/null | grep -qE '^snapd +[0-9]'
+}
+
+# The version apt would install, without the Debian revision.
+apt_candidate_version() {
+    apt-cache policy "$1" 2>/dev/null | sed -nE 's/^ *Candidate: *([0-9]+\.[0-9]+(\.[0-9]+)?).*/\1/p' | head -1
+}
+
+# Linux: a Ghostty that meets the target (Snap, apt or a local build) is kept.
+# Otherwise the classic Snap, which tracks the latest stable release and
+# refreshes itself; where snapd cannot run, apt when its candidate meets the
+# target. An apt package is removed once a Snap verifies, because /usr/bin
+# precedes /snap/bin in PATH and Ubuntu's package lags behind.
 # macOS: the Homebrew cask; a Ghostty.app from the DMG keeps its own updater.
 install_ghostty() {
-    local before
+    local before candidate
     before=$(tool_version "$(ghostty_bin)")
     if [[ -n "$before" ]] && version_gte "$before" "$GHOSTTY_VERSION"; then
         success "Ghostty retained ($before)"
@@ -1388,16 +1410,28 @@ install_ghostty() {
         fi
     else
         if ! command_exists snap; then
-            run_with_sudo 'snapd prerequisite for Ghostty' apt-get install -y snapd || return 1
+            run_with_sudo 'snapd prerequisite for Ghostty' apt-get install -y snapd || true
         fi
-        if snap list ghostty >/dev/null 2>&1; then
-            run_with_sudo 'Ghostty stable update' snap refresh ghostty --channel=latest/stable || return 1
+        if snapd_available; then
+            if snap list ghostty >/dev/null 2>&1; then
+                run_with_sudo 'Ghostty stable update' snap refresh ghostty --channel=latest/stable || return 1
+            else
+                run_with_sudo 'Ghostty installation' snap install ghostty --classic --channel=latest/stable || return 1
+            fi
         else
-            run_with_sudo 'Ghostty installation' snap install ghostty --classic --channel=latest/stable || return 1
+            candidate=$(apt_candidate_version ghostty)
+            if [[ -n "$candidate" ]] && version_gte "$candidate" "$GHOSTTY_VERSION"; then
+                warning "snapd is not available here; installing Ghostty $candidate from apt instead"
+                run_with_sudo 'Ghostty apt installation' apt-get install -y ghostty || return 1
+            else
+                warning "Ghostty needs snapd (not available here) or an apt package at $GHOSTTY_VERSION or newer (candidate: ${candidate:-none})"
+                return 1
+            fi
         fi
     fi
     require_version "$(ghostty_bin)" "$GHOSTTY_VERSION" || return 1
-    if [[ "$OS_TYPE" == linux && "$(dpkg-query -W -f='${Status}' ghostty 2>/dev/null || true)" == 'install ok installed' ]]; then
+    if [[ "$OS_TYPE" == linux && "$(ghostty_bin)" == "$GHOSTTY_SNAP_BIN" &&
+        "$(dpkg-query -W -f='${Status}' ghostty 2>/dev/null || true)" == 'install ok installed' ]]; then
         run_with_sudo 'removal of the apt Ghostty package' apt-get remove -y ghostty || return 1
         success 'Removed the apt Ghostty package; the Snap is the only Ghostty'
     fi
@@ -2982,11 +3016,23 @@ KICKSTART_PATCH_EOF
 }
 
 # Files added to each starter. deploy_file keeps reruns convergent.
+# A generated file in a directory the user also writes to: an existing file
+# without the managed header is theirs and is left alone.
+deploy_added_file() {
+    local target="$1" mode="$2"
+    if [[ -f "$target" ]] && ! head -5 "$target" | grep -q 'Managed by shell-backup'; then
+        warning "$target is not managed by setup; left as is"
+        cat > /dev/null
+        return 0
+    fi
+    deploy_file "$target" "$mode"
+}
+
 deploy_neovim_files() {
     local dir="$2"
     case "$1" in
         nvim-lazyvim)
-            deploy_file "$dir/lua/plugins/git.lua" 644 << 'LAZYVIM_GIT_EOF' || return 1
+            deploy_added_file "$dir/lua/plugins/git.lua" 644 << 'LAZYVIM_GIT_EOF' || return 1
 -- Managed by shell-backup setup.sh.
 -- Git: LazyVim already ships gitsigns and lazygit. diffview adds side-by-side
 -- review of changes and history, and a 3-way merge tool for conflicts.
@@ -3014,7 +3060,7 @@ return {
   },
 }
 LAZYVIM_GIT_EOF
-            deploy_file "$dir/lua/plugins/bash.lua" 644 << 'LAZYVIM_BASH_EOF' || return 1
+            deploy_added_file "$dir/lua/plugins/bash.lua" 644 << 'LAZYVIM_BASH_EOF' || return 1
 -- Managed by shell-backup setup.sh.
 -- Bash/zsh: LazyVim has no shell extra, so it is added here.
 return {
@@ -3027,7 +3073,7 @@ return {
   { "stevearc/conform.nvim", opts = { formatters_by_ft = { sh = { "shfmt" }, bash = { "shfmt" } } } },
 }
 LAZYVIM_BASH_EOF
-            deploy_file "$dir/lua/plugins/learning.lua" 644 << 'LAZYVIM_LEARNING_EOF' || return 1
+            deploy_added_file "$dir/lua/plugins/learning.lua" 644 << 'LAZYVIM_LEARNING_EOF' || return 1
 -- Managed by shell-backup setup.sh.
 -- Helpers to learn a little at a time while using Neovim.
 local tips_dir = vim.fn.expand("~/Proyectos/tips.nvim")
@@ -3070,7 +3116,7 @@ return {
 LAZYVIM_LEARNING_EOF
             ;;
         nvim-kickstart)
-            deploy_file "$dir/lua/custom/plugins/git.lua" 644 << 'KICKSTART_GIT_EOF' || return 1
+            deploy_added_file "$dir/lua/custom/plugins/git.lua" 644 << 'KICKSTART_GIT_EOF' || return 1
 -- Managed by shell-backup setup.sh.
 -- Git: gitsigns is already set up in init.lua (<leader>h...). Added here:
 --   diffview.nvim  side-by-side changes, history and a 3-way merge tool
@@ -3104,7 +3150,7 @@ vim.keymap.set('n', '<leader>gv', '<cmd>DiffviewOpen<cr>', { desc = 'Diffview: c
 vim.keymap.set('n', '<leader>gV', '<cmd>DiffviewFileHistory %<cr>', { desc = 'Diffview: file history' })
 vim.keymap.set('n', '<leader>gH', '<cmd>DiffviewFileHistory<cr>', { desc = 'Diffview: repo history' })
 KICKSTART_GIT_EOF
-            deploy_file "$dir/lua/custom/plugins/learning.lua" 644 << 'KICKSTART_LEARNING_EOF' || return 1
+            deploy_added_file "$dir/lua/custom/plugins/learning.lua" 644 << 'KICKSTART_LEARNING_EOF' || return 1
 -- Managed by shell-backup setup.sh.
 -- Helpers to learn a little at a time while using Neovim.
 
@@ -3141,11 +3187,27 @@ KICKSTART_LEARNING_EOF
 }
 
 # Starters are cloned and patched by Git without looking in parent
-# directories, so a dotfiles repository around ~/.config is never used.
+# directories, so a dotfiles repository around ~/.config is never used. Git
+# discovers repositories from the physical path, so the ceiling is derived
+# from it too (a config symlinked into a dotfiles repository by stow), and an
+# exported GIT_DIR/GIT_WORK_TREE must not redirect the edit.
 starter_git() {
-    local dir="$1"
+    local dir
+    dir=$(cd "$1" && pwd -P) || return 1
     shift
-    GIT_CEILING_DIRECTORIES="$(dirname "$dir")" git -C "$dir" "$@"
+    (
+        unset GIT_DIR GIT_WORK_TREE
+        GIT_CEILING_DIRECTORIES="$(dirname "$dir")" exec git -C "$dir" "$@"
+    )
+}
+
+# The repository Git would edit for a config, if it is not the config itself.
+starter_enclosing_repository() {
+    local dir top
+    dir=$(cd "$1" && pwd -P) || return 1
+    top=$(starter_git "$dir" rev-parse --show-toplevel 2>/dev/null || true)
+    [[ -n "$top" && "$top" != "$dir" ]] || return 1
+    printf '%s\n' "$top"
 }
 
 fresh_clone() {
@@ -3173,7 +3235,12 @@ clone_neovim_starter() {
 # local edits that conflict with it are kept and reported (the user owns the
 # config). A pre-existing config is backed up before it is patched.
 apply_neovim_starter_patch() {
-    local name="$1" dir="$2" fresh="$3" patch file status=0
+    local name="$1" dir="$2" fresh="$3" patch file status=0 enclosing
+    if enclosing=$(starter_enclosing_repository "$dir"); then
+        # Inside another work tree, git apply would silently skip every path.
+        warning "$name: $dir is inside the repository $enclosing; not patched"
+        return 1
+    fi
     patch=$(mktemp) || return 1
     if ! neovim_starter_patch "$name" > "$patch"; then
         rm -f "$patch"
@@ -3194,6 +3261,7 @@ apply_neovim_starter_patch() {
         fi
     else
         warning "$name: local edits conflict with the managed changes; $dir left as is"
+        status=3
     fi
     rm -f "$patch"
     return "$status"
@@ -3202,7 +3270,7 @@ apply_neovim_starter_patch() {
 setup_neovim_configs() {
     log "Setting up Neovim configs..."
     command_exists git || return 1
-    local name repository commit dir fresh status=0
+    local name repository commit dir fresh patched status=0
     while IFS='|' read -r name repository commit; do
         dir="$HOME/.config/$name"
         fresh=false
@@ -3219,8 +3287,18 @@ setup_neovim_configs() {
             status=1
             continue
         fi
-        apply_neovim_starter_patch "$name" "$dir" "$fresh" || status=1
-        deploy_neovim_files "$name" "$dir" || status=1
+        # Added files belong only in a starter that carries the managed edits:
+        # a config whose patch conflicts (or an older starter generation) is
+        # left entirely alone.
+        patched=0
+        apply_neovim_starter_patch "$name" "$dir" "$fresh" || patched=$?
+        if [[ "$patched" == 0 ]]; then
+            deploy_neovim_files "$name" "$dir" || status=1
+        elif [[ "$patched" == 3 ]]; then
+            log "$name: added plugin files not deployed while the managed edits are missing"
+        else
+            status=1
+        fi
     done < <(neovim_starters)
     [[ "$status" == 0 ]] && success "Neovim configs ready (plugins install on first start)"
     return "$status"
@@ -3620,10 +3698,14 @@ verify_installation() {
         fi
     }
 
+    # A fourth argument names the binary to look for when it is not on PATH
+    # (the Ghostty inside an app bundle or the Snap).
     check_versioned_cmd() {
-        local name="$1" min_ver="$2" ver="$3"
+        local name="$1" min_ver="$2" ver="$3" path="${4:-$1}"
         checks_total=$((checks_total + 1))
-        if ! command_exists "$name"; then
+        if [[ "$path" == */* ]]; then
+            [[ -x "$path" ]] || { warning "$name not found"; return; }
+        elif ! command_exists "$path"; then
             warning "$name not found"
             return
         fi
@@ -3661,7 +3743,7 @@ verify_installation() {
         name="${item%%:*}"; minimum="${item#*:}"
         check_versioned_cmd "$name" "$minimum" "$(tool_version "$name")"
     done
-    check_versioned_cmd ghostty "$GHOSTTY_VERSION" "$(tool_version "$(ghostty_bin)")"
+    check_versioned_cmd ghostty "$GHOSTTY_VERSION" "$(tool_version "$(ghostty_bin)")" "$(ghostty_bin)"
     if cmux_wanted; then
         check_path cmux "$(find_cmux || printf '/missing-cmux')"
     fi

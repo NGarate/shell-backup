@@ -649,6 +649,79 @@ brew() { [[ "$1" == list ]] && return 1; exit 98; }
 """)
         self.assertIn('Ghostty outside Homebrew is below target', output)
 
+    def linux_ghostty(self, snapd, candidate, code):
+        """Mocks: snap (daemon reachable or not), apt-cache policy, apt-get, dpkg-query."""
+        snap_bin = self.home / 'snap/bin'
+        snap_bin.mkdir(parents=True, exist_ok=True)
+        self.env['GHOSTTY_SNAP_BIN'] = str(snap_bin / 'ghostty')
+        snapd_line = 'snapd   2.70' if snapd else 'snapd   unavailable'
+        self.executable('snap', '#!/bin/bash\n'
+                        'echo "snap $*" >> "$CALLS"\n'
+                        'case "$1" in\n'
+                        f'  version) printf "snap    2.70\\n{snapd_line}\\n" ;;\n'
+                        f'  list) [[ -x "{snap_bin}/ghostty" ]] ;;\n'
+                        f'  install|refresh) printf \'#!/bin/bash\\necho "Ghostty 1.3.1"\\n\' > "{snap_bin}/ghostty"; chmod +x "{snap_bin}/ghostty" ;;\n'
+                        'esac\n')
+        self.executable('apt-cache', f'#!/bin/bash\nprintf "ghostty:\\n  Installed: (none)\\n  Candidate: {candidate}\\n"\n')
+        self.executable('apt-get', '#!/bin/bash\n'
+                        'echo "apt-get $*" >> "$CALLS"\n'
+                        'if [[ "$1 $3" == "install ghostty" ]]; then\n'
+                        '  printf \'#!/bin/bash\\necho "Ghostty 1.3.1"\\n\' > "$HOME/.local/bin/ghostty"; chmod +x "$HOME/.local/bin/ghostty"; touch "$HOME/apt-ghostty"\n'
+                        'elif [[ "$1 $3" == "remove ghostty" ]]; then\n'
+                        '  rm -f "$HOME/.local/bin/ghostty" "$HOME/apt-ghostty"\n'
+                        'fi\n')
+        self.executable('dpkg-query', '#!/bin/bash\n[[ -e "$HOME/apt-ghostty" ]] && echo "install ok installed"\n')
+        return self.run_shell('run_with_sudo() { shift; "$@"; }\n' + code)
+
+    def test_linux_ghostty_keeps_qualifying_install_and_falls_back_to_apt(self):
+        # A Ghostty on PATH that meets the target is kept, Snap or not.
+        self.executable('ghostty', '#!/bin/bash\necho "Ghostty 1.3.1"\n')
+        output = self.linux_ghostty(False, '1.3.0-1', 'install_ghostty')
+        self.assertIn('Ghostty retained (1.3.1)', output)
+        self.assertEqual(self.calls(), [])
+        (self.bin / 'ghostty').unlink()
+        # snapd reachable: the Snap is installed, and an apt package goes away.
+        (self.home / 'apt-ghostty').touch()
+        output = self.linux_ghostty(True, '1.3.0-1', 'install_ghostty')
+        self.assertIn('snap install ghostty --classic --channel=latest/stable', self.calls())
+        self.assertIn('apt-get remove -y ghostty', self.calls())
+        self.assertIn('Removed the apt Ghostty package', output)
+        (self.home / 'calls').unlink()
+        self.assertIn('Ghostty retained (1.3.1)', self.linux_ghostty(True, '1.3.0-1', 'install_ghostty'))
+        self.assertEqual(self.calls(), [])
+        (self.home / 'snap/bin/ghostty').unlink()
+        # No snapd (WSL, containers): apt when its candidate meets the target.
+        output = self.linux_ghostty(False, '1.3.1-2ubuntu1', 'install_ghostty')
+        self.assertIn('installing Ghostty 1.3.1 from apt', output)
+        self.assertEqual([c for c in self.calls() if c.startswith('apt-get')], ['apt-get install -y ghostty'])
+        self.assertTrue((self.home / 'apt-ghostty').exists())
+        (self.bin / 'ghostty').unlink()
+        (self.home / 'apt-ghostty').unlink()
+        # Neither snapd nor a recent enough package: a clear failure.
+        output = self.linux_ghostty(False, '1.3.0-1', '! install_ghostty')
+        self.assertIn('needs snapd', output)
+        self.assertIn('candidate: 1.3.0', output)
+        self.assertFalse((self.bin / 'ghostty').exists())
+
+    def test_verification_finds_ghostty_by_path(self):
+        # macOS: the binary inside Ghostty.app counts even with no `ghostty` on PATH.
+        self.assertIn('ghostty not found', self.run_shell('OS_TYPE=darwin\nverify_installation || true'))
+        app = self.home / 'Applications/Ghostty.app/Contents/MacOS'
+        app.mkdir(parents=True)
+        (app / 'ghostty').write_text('#!/bin/bash\necho "Ghostty 1.3.1"\n')
+        (app / 'ghostty').chmod(0o755)
+        output = self.run_shell('OS_TYPE=darwin\nverify_installation || true')
+        self.assertIn('ghostty installed (1.3.1)', output)
+        self.assertNotIn('ghostty not found', output)
+        # Linux: the Snap when present, otherwise the ghostty on PATH.
+        self.executable('ghostty', '#!/bin/bash\necho "Ghostty 1.3.1"\n')
+        self.assertIn('ghostty installed (1.3.1)', self.run_shell('GHOSTTY_SNAP_BIN=/missing\nverify_installation || true'))
+
+    def test_deprecated_with_herdr_flag_is_ignored(self):
+        output = self.run_shell('parse_args --with-herdr --ci\n[[ "$NON_INTERACTIVE" == true ]]')
+        self.assertIn('--with-herdr is no longer needed', output)
+        self.assertIn('Unknown option: --with-x', self.run_shell('(parse_args --with-x) 2>&1 || true'))
+
     def test_macos_old_os_blocks_native_terminal(self):
         output = self.run_shell("""OS_TYPE=darwin
 sw_vers() { echo 13.7; }
@@ -1010,8 +1083,20 @@ release_asset herdr darwin arm64 >/dev/null
         init = kickstart / 'init.lua'
         init.write_text(init.read_text().replace('vim.g.have_nerd_font = true', 'vim.g.have_nerd_font = vim.env.NERD ~= nil'))
         edited = init.read_text()
-        self.assertIn('left as is', self.run_shell(starters + 'setup_neovim_configs'))
+        (kickstart / 'lua/custom/plugins/git.lua').unlink()
+        output = self.run_shell(starters + 'setup_neovim_configs')
+        self.assertIn('left as is', output)
         self.assertEqual(init.read_text(), edited)
+        # Added files are held back while the managed edits are missing.
+        self.assertIn('added plugin files not deployed', output)
+        self.assertFalse((kickstart / 'lua/custom/plugins/git.lua').exists())
+        # A user's own file with a managed name is never replaced.
+        own = lazyvim / 'lua/plugins/git.lua'
+        own.write_text('return {}\n')
+        output = self.run_shell(starters + 'setup_neovim_configs')
+        self.assertIn('git.lua is not managed by setup; left as is', output)
+        self.assertEqual(own.read_text(), 'return {}\n')
+        self.assertFalse(list((self.home / '.backup').glob('git.lua*')))
 
     def test_neovim_starter_patch_ignores_outer_repository(self):
         starters = self.starter_fixtures()
@@ -1024,6 +1109,19 @@ release_asset herdr darwin arm64 >/dev/null
         self.assertIn('lazyvim.plugins.extras.lang.python', lazy.read_text())
         # It existed before setup, so the file was backed up before patching.
         self.assertTrue(list((self.home / '.backup').glob('lazy.lua.backup.*')))
+        # A config symlinked into a dotfiles repository (stow) is patched in
+        # place: Git must not treat it as a subdirectory of that repository.
+        for path in ('.config/nvim-lazyvim', '.config/nvim-kickstart', '.config/.git'):
+            shutil.rmtree(self.home / path)
+        self.run_shell(starters + 'git clone -q "$(neovim_starters | tail -1 | cut -d"|" -f2)" "$HOME/dotfiles/nvim-kickstart"\n'
+                       'rm -rf "$HOME/dotfiles/nvim-kickstart/.git"\n'
+                       'git -C "$HOME/dotfiles" init -q && git -C "$HOME/dotfiles" add . && '
+                       'git -C "$HOME/dotfiles" -c user.name=T -c user.email=t@example.invalid commit -qm dotfiles\n'
+                       'ln -s "$HOME/dotfiles/nvim-kickstart" "$HOME/.config/nvim-kickstart"\n'
+                       'GIT_DIR="$HOME/.config/.git" setup_neovim_configs\n')
+        init = self.home / 'dotfiles/nvim-kickstart/init.lua'
+        self.assertIn('vim.g.have_nerd_font = true', init.read_text())
+        self.assertIn('init.lua', self.run_shell('git -C "$HOME/dotfiles" status --porcelain'))
 
     def test_backups_with_the_same_basename_do_not_collide(self):
         for name in ('one', 'two'):
