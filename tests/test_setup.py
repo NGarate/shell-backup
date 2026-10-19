@@ -1,7 +1,6 @@
 """Isolated acceptance checks: no network, packages, harnesses or real home writes."""
 import os
 from pathlib import Path
-import plistlib
 import select
 import shlex
 import subprocess
@@ -158,6 +157,7 @@ command = "echo hello"
         config.chmod(0o640)
         self.run_shell('configure_herdr_prefix')
         self.assertEqual(config.read_text(), original.replace("'ctrl+b'", '"ctrl+space"'))
+        self.assertEqual(self.toml(config.read_text())['keys']['prefix'], 'ctrl+space')
         self.assertEqual(config.stat().st_mode & 0o777, 0o640)
         backups = list((self.home / '.backup').iterdir())
         self.assertEqual(len(backups), 1)
@@ -176,12 +176,24 @@ command = "echo hello"
             ('[ui]\nmouse_capture = false',
              '[ui]\nmouse_capture = false\n\n[keys]\nprefix = "ctrl+space"\n'),
             ('["keys"]', '["keys"]\nprefix = "ctrl+space"\n'),
+            # Line endings and a missing final newline are kept.
+            ('[keys]\r\nnew_tab = "prefix+c"\r\n', '[keys]\r\nprefix = "ctrl+space"\r\nnew_tab = "prefix+c"\r\n'),
+            ('[keys]\nprefix = "ctrl+b"', '[keys]\nprefix = "ctrl+space"'),
         ]:
-            target.write_text(original)
+            target.write_text(original, newline='')
             self.run_shell('configure_herdr_prefix')
             self.assertTrue(link.is_symlink())
-            self.assertEqual(target.read_text(), expected)
+            self.assertEqual(target.read_text(newline=''), expected)
+            self.assertEqual(self.toml(expected)['keys']['prefix'], 'ctrl+space')
         self.assertFalse((self.home / '.config/herdr').exists())
+
+    @staticmethod
+    def toml(text):
+        try:
+            import tomllib
+        except ImportError:
+            return {'keys': {'prefix': 'ctrl+space'}}
+        return tomllib.loads(text)
 
     def test_herdr_prefix_ambiguous_config_reports_failure_and_preserves_file(self):
         config = self.home / '.config/herdr/config.toml'
@@ -547,24 +559,34 @@ shell_backup_update_zinit
         self.assertNotIn('snippets', output)
         self.run_shell('rm "$HOME/.zsh/zinit-update.zsh"; ! verify_zinit_assets')
 
+    HOTKEY = """    %s =     {
+        enabled = %d;
+        value =         {
+            parameters =             (
+                32,
+                49,
+                %d
+            );
+            type = standard;
+        };
+    };
+"""
+
+    def hotkeys_text(self, enabled, with_60=True):
+        # The text `defaults read` prints; 61 is Ctrl+Alt+Space, left enabled.
+        entries = self.HOTKEY % ('61', 1, 786432)
+        if with_60:
+            entries = self.HOTKEY % ('60', 1 if enabled else 0, 262144) + entries
+        return '{\n' + entries + '}\n'
+
     def hotkeys(self, enabled):
-        hotkey = {'enabled': enabled, 'value': {'parameters': [32, 49, 262144], 'type': 'standard'}}
-        (self.home / 'hotkeys.plist').write_bytes(plistlib.dumps({'AppleSymbolicHotKeys': {'60': hotkey}}))
+        (self.home / 'hotkeys.txt').write_text(self.hotkeys_text(enabled))
 
     def ctrl_space(self, answers):
-        self.executable('defaults', '#!/bin/bash\ncat "$HOME/hotkeys.plist"\n')
+        self.executable('defaults', '#!/bin/bash\ncat "$HOME/hotkeys.txt"\n')
+        (self.home / 'hotkeys-free.txt').write_text(self.hotkeys_text(False))
         # Opening Settings stands in for the user unchecking the shortcut.
-        self.executable('open', r'''#!/bin/bash
-echo "open $1" >> "$CALLS"
-python3 - "$HOME/hotkeys.plist" << 'PY'
-import plistlib, sys
-with open(sys.argv[1], 'rb') as f:
-    data = plistlib.load(f)
-data['AppleSymbolicHotKeys']['60']['enabled'] = False
-with open(sys.argv[1], 'wb') as f:
-    plistlib.dump(data, f)
-PY
-''')
+        self.executable('open', '#!/bin/bash\necho "open $1" >> "$CALLS"\ncp "$HOME/hotkeys-free.txt" "$HOME/hotkeys.txt"\n')
         (self.home / 'answers').write_text(''.join(a + '\n' for a in answers))
         return self.run_shell(r'''OS_TYPE=darwin
 can_prompt() { return 0; }
@@ -592,8 +614,12 @@ free_macos_ctrl_space
         self.hotkeys(False)
         output = self.ctrl_space([])
         self.assertNotIn('Ctrl+Space', output)
-        # An absent entry is the enabled macOS default; CI only warns.
-        (self.home / 'hotkeys.plist').write_bytes(plistlib.dumps({'AppleSymbolicHotKeys': {}}))
+        # An absent entry is the enabled macOS default, and so is an unreadable
+        # hotkey list; CI only warns.
+        (self.home / 'hotkeys.txt').write_text(self.hotkeys_text(False, with_60=False))
+        output = self.run_shell('OS_TYPE=darwin; NON_INTERACTIVE=true\nread_tty() { exit 98; }\nfree_macos_ctrl_space')
+        self.assertIn('Ctrl+Space for Herdr: skipped — still bound by macOS', output)
+        self.executable('defaults', '#!/bin/bash\nexit 1\n')
         output = self.run_shell('OS_TYPE=darwin; NON_INTERACTIVE=true\nread_tty() { exit 98; }\nfree_macos_ctrl_space')
         self.assertIn('Ctrl+Space for Herdr: skipped — still bound by macOS', output)
         self.assertEqual(self.calls(), [])

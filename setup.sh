@@ -429,21 +429,47 @@ ATTACH_EOF
 
 # macOS binds Ctrl+Space (space key code 49, Control modifier 262144) to
 # "Select the previous input source" (hotkey 60), which swallows Herdr's
-# prefix. An absent entry 60 means the system default, which is enabled.
+# prefix. An absent entry 60 means the system default, which is enabled, and so
+# does an unreadable hotkey list. Parsed with awk: setup needs no Python.
 macos_ctrl_space_taken() {
-    defaults export com.apple.symbolichotkeys - 2>/dev/null | python3 -c '
-import plistlib, sys
-try:
-    hotkeys = plistlib.loads(sys.stdin.buffer.read()).get("AppleSymbolicHotKeys", {})
-except Exception:
-    hotkeys = {}
-if "60" not in hotkeys:
-    sys.exit(0)
-for entry in hotkeys.values():
-    parameters = entry.get("value", {}).get("parameters", [])
-    if entry.get("enabled") and len(parameters) == 3 and list(parameters[1:]) == [49, 262144]:
-        sys.exit(0)
-sys.exit(1)'
+    local hotkeys
+    hotkeys=$(defaults read com.apple.symbolichotkeys AppleSymbolicHotKeys 2>/dev/null || true)
+    printf '%s\n' "$hotkeys" | awk '
+    BEGIN { depth = 0; seen60 = 0; taken = 0; expect = ""; last = ""; inparams = 0 }
+    {
+        gsub(/[{}();,=]/, " & ")
+        n = split($0, t, /[ \t]+/)
+        for (i = 1; i <= n; i++) {
+            tok = t[i]
+            if (tok == "") continue
+            gsub(/"/, "", tok)
+            if (tok == "{") {
+                depth++
+                if (depth == 2) { entry = last; enabled = ""; np = 0 }
+                expect = ""
+            } else if (tok == "}") {
+                if (depth == 2) {
+                    if (entry == "60") seen60 = 1
+                    if (enabled == "1" && np == 3 && p[2] == 49 && p[3] == 262144) taken = 1
+                }
+                depth--
+            } else if (tok == "(") {
+                if (depth == 3 && expect == "parameters") inparams = 1
+                expect = ""
+            } else if (tok == ")") {
+                inparams = 0
+            } else if (tok == "=") {
+                expect = last
+            } else if (tok == ";" || tok == ",") {
+                expect = ""
+            } else {
+                if (inparams) p[++np] = tok
+                else if (expect == "enabled" && depth == 2) enabled = tok
+                last = tok
+            }
+        }
+    }
+    END { exit (!seen60 || taken) ? 0 : 1 }'
 }
 
 # Herdr keeps Ctrl+Space; offer to open Keyboard settings so the user can free
@@ -480,92 +506,110 @@ free_macos_ctrl_space() {
     fi
 }
 
+# Mode of a file, following symlinks (GNU stat on Linux, BSD stat on macOS).
+file_mode() {
+    stat -L -c %a "$1" 2>/dev/null || stat -L -f %Lp "$1" 2>/dev/null
+}
+
+# Set [keys].prefix = "ctrl+space" in Herdr's TOML config, in awk so that
+# curl | bash needs nothing beyond bash and awk. Edits are limited to ordinary
+# tables and single-line strings: ambiguous layouts fail with the file kept.
 configure_herdr_prefix() {
-    # Keep this editor embedded so curl | bash remains self-contained.
     # No server commands: existing clients can reload config or reattach later.
-    python3 - "${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}" "$BACKUP_DIR" <<'HERDR_CONFIG_EOF'
-import os
-from pathlib import Path
-import re
-import shutil
-import stat
-import sys
-import tempfile
-
-path = Path(sys.argv[1]).expanduser().resolve()
-backup_dir = Path(sys.argv[2])
-original = path.read_bytes() if path.exists() else b''
-text = original.decode('utf-8')
-
-# Restrict edits to ordinary TOML tables/scalar strings. Refuse ambiguous
-# layouts instead of interpreting a table-looking line inside a string.
-if '\"\"\"' in text or "'''" in text:
-    sys.exit('Herdr prefix: multiline TOML strings require a manual prefix edit; file preserved.')
-if re.search(r'''(?m)^\s*(?:keys|"keys"|'keys')\s*[.=]''', text):
-    sys.exit('Herdr prefix: inline/dotted keys table requires a manual prefix edit; file preserved.')
-
-newline = '\r\n' if '\r\n' in text else '\n'
-lines = text.splitlines(keepends=True)
-header = re.compile(r'''^\s*\[\s*(?:keys|"keys"|'keys')\s*\]\s*(?:#.*)?$''')
-sections = [i for i, line in enumerate(lines) if header.fullmatch(line.rstrip('\r\n'))]
-if len(sections) > 1:
-    sys.exit('Herdr prefix: duplicate keys tables; file preserved.')
-if sections:
-    start = sections[0] + 1
-    end = next((i for i in range(start, len(lines)) if lines[i].lstrip().startswith('[')), len(lines))
-    assignment = re.compile(r'''^(\s*(?:prefix|"prefix"|'prefix')\s*=\s*)("(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*')([ \t]*(?:#[^\r\n]*)?)(\r?\n)?$''')
-    candidates = [i for i in range(start, end)
-                  if re.match(r'''^\s*(?:prefix|"prefix"|'prefix')\s*=''', lines[i])]
-    if len(candidates) > 1:
-        sys.exit('Herdr prefix: duplicate prefix entries; file preserved.')
-    if candidates:
-        i = candidates[0]
-        match = assignment.fullmatch(lines[i])
-        if not match:
-            sys.exit('Herdr prefix: unsupported prefix value; file preserved.')
-        if match[2] not in ('"ctrl+space"', "'ctrl+space'"):
-            lines[i] = match[1] + '"ctrl+space"' + match[3] + (match[4] or '')
-    else:
-        if not lines[start - 1].endswith('\n'):
-            lines[start - 1] += newline
-        lines.insert(start, 'prefix = "ctrl+space"' + newline)
-else:
-    if text and not text.endswith('\n'):
-        lines.append(newline)
-    lines.extend([newline if text else '', '[keys]' + newline, 'prefix = "ctrl+space"' + newline])
-
-updated = ''.join(lines).encode('utf-8')
-if updated == original:
-    print('Herdr prefix already set to ctrl+space; config preserved.')
-    sys.exit(0)
-
-# When provided by Python (3.11+), validate the entire document too.
-try:
-    import tomllib
-except ImportError:
-    pass
-else:
-    tomllib.loads(updated.decode('utf-8'))
-
-path.parent.mkdir(parents=True, exist_ok=True)
-if path.exists():
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    fd, backup = tempfile.mkstemp(prefix='herdr-config.toml.backup.', dir=str(backup_dir))
-    os.close(fd)
-    shutil.copy2(str(path), backup)
-    print('Herdr config backup: ' + backup)
-fd, temporary = tempfile.mkstemp(prefix='.herdr-config-', dir=str(path.parent))
-try:
-    with os.fdopen(fd, 'wb') as output:
-        output.write(updated)
-    if path.exists():
-        os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
-    os.replace(temporary, str(path))
-finally:
-    if os.path.exists(temporary):
-        os.unlink(temporary)
-print('Herdr prefix saved as ctrl+space: ' + str(path))
-HERDR_CONFIG_EOF
+    local path="${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}" source=/dev/null
+    local mode=644 crlf=0 trailing=1 temp errors reason program
+    if [[ -e "$path" ]]; then
+        if [[ ! -f "$path" ]]; then
+            warning "Herdr prefix: $path is not a regular file; file preserved."
+            return 1
+        fi
+        source="$path"
+        mode=$(file_mode "$path")
+        ! grep -q $'\r' "$path" || crlf=1
+        if [[ -s "$path" && -n "$(tail -c1 "$path")" ]]; then
+            trailing=0
+        fi
+    fi
+    read -r -d '' program <<'HERDR_PREFIX_AWK' || true
+function fail(message) { print message > "/dev/stderr"; exit 1 }
+{
+    line = $0
+    E[NR] = sub(/\r$/, "", line) ? "\r\n" : "\n"
+    L[NR] = line
+}
+END {
+    n = NR
+    nl = crlf ? "\r\n" : "\n"
+    sections = 0
+    for (i = 1; i <= n; i++) {
+        if (index(L[i], "\"\"\"") || index(L[i], "'''"))
+            fail("multiline TOML strings require a manual prefix edit")
+        if (L[i] ~ /^[ \t]*(keys|"keys"|'keys')[ \t]*[.=]/)
+            fail("inline/dotted keys table requires a manual prefix edit")
+        if (L[i] ~ /^[ \t]*\[[ \t]*(keys|"keys"|'keys')[ \t]*\][ \t]*(#.*)?$/) { sections++; header = i }
+    }
+    if (sections > 1) fail("duplicate keys tables")
+    out = 0
+    if (sections == 1) {
+        start = header + 1
+        end = n + 1
+        for (i = start; i <= n; i++) if (L[i] ~ /^[ \t]*\[/) { end = i; break }
+        candidates = 0
+        for (i = start; i < end; i++)
+            if (L[i] ~ /^[ \t]*(prefix|"prefix"|'prefix')[ \t]*=/) { candidates++; found = i }
+        if (candidates > 1) fail("duplicate prefix entries")
+        if (candidates == 1) {
+            line = L[found]
+            match(line, /^[ \t]*(prefix|"prefix"|'prefix')[ \t]*=[ \t]*/)
+            head = substr(line, 1, RLENGTH)
+            rest = substr(line, RLENGTH + 1)
+            if (rest ~ /^"/) { if (!match(rest, /^"([^"\\]|\\.)*"/)) fail("unsupported prefix value") }
+            else if (rest ~ /^'/) { if (!match(rest, /^'[^']*'/)) fail("unsupported prefix value") }
+            else fail("unsupported prefix value")
+            value = substr(rest, 1, RLENGTH)
+            tail = substr(rest, RLENGTH + 1)
+            if (tail !~ /^[ \t]*(#.*)?$/) fail("unsupported prefix value")
+            if (value != "\"ctrl+space\"" && value != "'ctrl+space'") L[found] = head "\"ctrl+space\"" tail
+            for (i = 1; i <= n; i++) { O[++out] = L[i]; ORIG[out] = i }
+        } else {
+            for (i = 1; i <= header; i++) { O[++out] = L[i]; ORIG[out] = i }
+            O[++out] = "prefix = \"ctrl+space\""; ORIG[out] = 0
+            for (i = header + 1; i <= n; i++) { O[++out] = L[i]; ORIG[out] = i }
+        }
+    } else {
+        for (i = 1; i <= n; i++) { O[++out] = L[i]; ORIG[out] = i }
+        if (n > 0) { O[++out] = ""; ORIG[out] = 0 }
+        O[++out] = "[keys]"; ORIG[out] = 0
+        O[++out] = "prefix = \"ctrl+space\""; ORIG[out] = 0
+    }
+    for (j = 1; j <= out; j++) {
+        i = ORIG[j]
+        if (i == 0) ending = nl
+        else if (i == n && !trailing) ending = (j < out) ? nl : ""
+        else ending = E[i]
+        printf "%s%s", O[j], ending
+    }
+}
+HERDR_PREFIX_AWK
+    temp=$(mktemp) || return 1
+    errors=$(mktemp) || { rm -f "$temp"; return 1; }
+    if ! awk -v crlf="$crlf" -v trailing="$trailing" "$program" "$source" > "$temp" 2> "$errors"; then
+        reason=$(cat "$errors")
+        rm -f "$temp" "$errors"
+        warning "Herdr prefix: ${reason:-config could not be edited}; file preserved."
+        return 1
+    fi
+    rm -f "$errors"
+    if [[ -f "$path" ]] && cmp -s "$temp" "$path"; then
+        rm -f "$temp"
+        log 'Herdr prefix already set to ctrl+space; config preserved.'
+    elif deploy_file "$path" "${mode:-644}" < "$temp"; then
+        rm -f "$temp"
+        success "Herdr prefix saved as ctrl+space: $path"
+    else
+        rm -f "$temp"
+        return 1
+    fi
     log 'Herdr prefix: Ctrl+Space. Reload config in Herdr or reattach the client to apply.'
 }
 
