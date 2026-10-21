@@ -267,10 +267,17 @@ sha256_file() {
     fi
 }
 
+# curl restricted to HTTPS for the request and every redirect, so a checksum
+# comparison is never the only thing standing between a download and a
+# plain-HTTP hop.
+https_curl() {
+    curl --proto '=https' --proto-redir '=https' "$@"
+}
+
 verified_download() {
     local url="$1" checksum="$2" destination="$3" max_time="${4:-180}" actual
     [[ "$checksum" =~ ^[a-f0-9]{64}$ ]] || return 1
-    retry curl -fL --silent --show-error --connect-timeout 15 --max-time "$max_time" "$url" -o "$destination" || return 1
+    retry https_curl -fL --silent --show-error --connect-timeout 15 --max-time "$max_time" "$url" -o "$destination" || return 1
     actual=$(sha256_file "$destination") || return 1
     if [[ "$actual" != "$checksum" ]]; then
         warning "SHA-256 mismatch: $url"
@@ -1283,9 +1290,9 @@ setup_package_manager() {
         if ! command_exists brew; then
             log "Installing Homebrew..."
             if [[ "$NON_INTERACTIVE" == true ]]; then
-                NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                NONINTERACTIVE=1 /bin/bash -c "$(https_curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
             else
-                /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                /bin/bash -c "$(https_curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
             fi
             success "Homebrew installed"
         else
@@ -3929,7 +3936,7 @@ setup_yazi_plugins() {
     for plugin_url in \
         https://raw.githubusercontent.com/yazi-rs/plugins/main/git.yazi/main.lua \
         https://raw.githubusercontent.com/Rolv-Apneseth/starship.yazi/main/main.lua; do
-        metadata=$(curl -fsSL --connect-timeout 15 --max-time 30 "$plugin_url") || return 1
+        metadata=$(https_curl -fsSL --connect-timeout 15 --max-time 30 "$plugin_url") || return 1
         required=$(printf '%s\n' "$metadata" | sed -nE 's/^--- @since ([0-9.]+).*/\1/p' | head -1)
         [[ -z "$required" ]] || require_version yazi "$required" || return 1
     done

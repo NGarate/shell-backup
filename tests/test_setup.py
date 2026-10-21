@@ -328,6 +328,15 @@ setup_herdr
 ''')
         self.assertIn('SHA-256 mismatch', output)
 
+    def test_downloads_allow_only_https_including_redirects(self):
+        digest = hashlib.sha256(b'payload').hexdigest()
+        self.executable('curl', '#!/bin/bash\necho "curl $*" >> "$CALLS"\nprintf payload > "${@: -1}"\n')
+        self.run_shell(f'verified_download https://example.invalid/file {digest} "$HOME/download"')
+        self.assertEqual((self.home / 'download').read_bytes(), b'payload')
+        (call,) = self.calls()
+        self.assertTrue(call.startswith('curl --proto =https --proto-redir =https '), call)
+        self.assertTrue(call.endswith(f' https://example.invalid/file -o {self.home}/download'), call)
+
     def test_failed_stage_preserves_errexit_and_continues(self):
         output = self.run_shell('''broken() { false; touch "$HOME/incorrect-success"; }
 run_stage broken broken
