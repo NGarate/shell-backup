@@ -14,8 +14,6 @@ set -euo pipefail
 
 readonly SETUP_LOG="${HOME}/.setup.log"
 readonly BACKUP_DIR="${HOME}/.backup"
-# Saved choices reused by later runs, including --ci (KEY=value lines).
-readonly PROFILE_FILE="${HOME}/.config/shell-backup/profile"
 readonly FONT_MARKER_DIR="${HOME}/.local/share/shell-backup/fonts"
 readonly FONTCONFIG_FILE="${HOME}/.config/fontconfig/conf.d/60-shell-backup.conf"
 readonly TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -40,6 +38,7 @@ readonly FZF_VERSION="0.74.5"
 NON_INTERACTIVE=false
 WITH_CMUX=false
 FONT_CHOICE=""
+FONT_WEIGHT=""
 HERDR_BIN=""
 HERDR_READY=false
 SETUP_FAILED=false
@@ -88,12 +87,15 @@ parse_args() {
             --with-cmux) WITH_CMUX=true ;;
             # Herdr is installed on both platforms now; old invocations keep working.
             --with-herdr) warning '--with-herdr is no longer needed and is ignored (Herdr is installed by default)' ;;
-            --font=iosevka|--font=jetbrains) FONT_CHOICE="${arg#--font=}" ;;
-            --font=*) error "Unknown font: ${arg#--font=} (use iosevka or jetbrains)" ;;
+            --font=commit-mono|--font=jetbrains) FONT_CHOICE="${arg#--font=}" ;;
+            --font=*) error "Unknown font: ${arg#--font=} (use commit-mono or jetbrains)" ;;
+            --font-weight=300|--font-weight=350|--font-weight=400) FONT_WEIGHT="${arg#--font-weight=}" ;;
+            --font-weight=*) error "Unknown font weight: ${arg#--font-weight=} (use 300, 350 or 400)" ;;
             --help|-h)
-                printf '%s\n' 'Usage: setup.sh [--ci|--non-interactive] [--with-cmux] [--font=iosevka|jetbrains]' \
+                printf '%s\n' 'Usage: setup.sh [--ci|--non-interactive] [--with-cmux] [--font=commit-mono|jetbrains] [--font-weight=300|350|400]' \
                     'Ghostty + Herdr on Linux and macOS. --with-cmux adds cmux on macOS; an installed cmux stays managed; --with-herdr is accepted and ignored.' \
-                    'Terminal font: Iosevka Term SS05 (default) or JetBrainsMono Nerd Font; the choice is saved.'
+                    'Terminal font: SHELL_BACKUP_FONT=commit-mono (default) or jetbrains, SHELL_BACKUP_FONT_WEIGHT=300, 350 (default) or 400,' \
+                    'exported in ~/.zshrc.local or set in ~/.env; the flags override them for one run. Rerun setup.sh after a change.'
                 exit 0 ;;
             *) error "Unknown option: $arg" ;;
         esac
@@ -640,7 +642,7 @@ HERDR_PREFIX_AWK
         rm -f "$temp"
         return 1
     fi
-    log 'Herdr prefix: Ctrl+Space. Reload config in Herdr or reattach the client to apply.'
+    log 'Herdr prefix: Ctrl+Space.'
 }
 
 # Herdr 0.9.5 provides all four installers, but none of these four
@@ -737,24 +739,43 @@ setup_herdr_integrations() {
     done
 }
 
-# Official release digests (assets[].digest), audited 2026-10-14.
-# Format: tag|url|sha256|files copied from the archive. Nerd Fonts publishes
-# no patched SS05, so Iosevka takes its icons from the Symbols fallback.
+# Pinned font downloads, audited 2026-10-21. One record per line:
+# tag|url|sha256|files kept from the download (an archive, or the bare file).
+# Both terminal fonts are the originals, unpatched: Ghostty (and cmux through
+# libghostty) embeds the Nerd Fonts symbols as an always-on fallback, so icons
+# need no patched font there; Symbols Nerd Font is installed for fontconfig
+# and other applications. Commit Mono's release ships weights 400 and 700
+# only; its website builds the other weights in the browser from the per-weight
+# sources in src/fonts/fontlab, so the 300/350/400 faces and the 700 bold faces
+# come from those files at a pinned commit. They share the family
+# CommitMonoV143 and name their weight in the style ("350 Regular"), which
+# Ghostty selects with font-style. JetBrains Mono is the upstream variable
+# font, rendered at the chosen weight through font-variation.
 font_asset() {
+    local commit_mono='https://raw.githubusercontent.com/eigilnikolajsen/commit-mono/d407cd2bf8e01ca1db70544052fbbb9606406c3b/src/fonts/fontlab'
     case "$1" in
-        iosevka-term-ss05) printf '%s\n' 'v34.9.0|https://github.com/be5invis/Iosevka/releases/download/v34.9.0/PkgTTF-IosevkaTermSS05-34.9.0.zip|f1cf472e2552477b71cb397a770e41ae78035e24bca4c7235c4324137b314835|IosevkaTermSS05-Regular.ttf IosevkaTermSS05-Italic.ttf IosevkaTermSS05-Bold.ttf IosevkaTermSS05-BoldItalic.ttf' ;;
-        jetbrains-nerd) printf '%s\n' 'v3.5.1|https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.1/JetBrainsMono.tar.xz|04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf|JetBrainsMonoNerdFont-Regular.ttf JetBrainsMonoNerdFont-Italic.ttf JetBrainsMonoNerdFont-Bold.ttf JetBrainsMonoNerdFont-BoldItalic.ttf JetBrainsMonoNerdFontMono-Regular.ttf JetBrainsMonoNerdFontMono-Italic.ttf JetBrainsMonoNerdFontMono-Bold.ttf JetBrainsMonoNerdFontMono-BoldItalic.ttf' ;;
+        commit-mono)
+            printf '%s\n' \
+                "d407cd2|$commit_mono/CommitMonoV143-300Regular.otf|8169bbda182b97d059a82c5d68dfcccc7ef1006a7107e30f0034f3c4a55452fe|CommitMonoV143-300Regular.otf" \
+                "d407cd2|$commit_mono/CommitMonoV143-300Italic.otf|82a88bea4eda8848f1295bb09e5cbe4645daf21bcbe847aba5a15cc701f4ff33|CommitMonoV143-300Italic.otf" \
+                "d407cd2|$commit_mono/CommitMonoV143-350Regular.otf|79aba784f6c701843bfa5f4b4f10f295066b37805538d3826f1a7238e303e0d9|CommitMonoV143-350Regular.otf" \
+                "d407cd2|$commit_mono/CommitMonoV143-350Italic.otf|77e56d91227253ae61a8241f05d2a13036481d707d1a49074818a19e2c9c8a82|CommitMonoV143-350Italic.otf" \
+                "d407cd2|$commit_mono/CommitMonoV143-400Regular.otf|04fdcd6c5db353f8f420bcbaf0bc1e2058f639f6c65a933b7c51e53987ae902e|CommitMonoV143-400Regular.otf" \
+                "d407cd2|$commit_mono/CommitMonoV143-400Italic.otf|b5dcd09d8bcb695b9a7510a702bc5f04d591c008e248e3fcd354b28da3e0ab8d|CommitMonoV143-400Italic.otf" \
+                "d407cd2|$commit_mono/CommitMonoV143-700Regular.otf|de7fbec201bf83a075cb4255a3e3771545f5a935d98094de3b172475b2169608|CommitMonoV143-700Regular.otf" \
+                "d407cd2|$commit_mono/CommitMonoV143-700Italic.otf|ef70d42a9e72d6205432852e1342971213fa206ce823e04b39158fcff03b2f64|CommitMonoV143-700Italic.otf" ;;
+        jetbrains-mono) printf '%s\n' 'v2.304|https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip|6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb7012f7bbf|JetBrainsMono[wght].ttf JetBrainsMono-Italic[wght].ttf' ;;
         symbols-nerd) printf '%s\n' 'v3.5.1|https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.1/NerdFontsSymbolsOnly.tar.xz|01172f37db8543edb102e5cb5c64101c9f4686630804d49b419aa07b23a69996|SymbolsNerdFont-Regular.ttf SymbolsNerdFontMono-Regular.ttf' ;;
         *) return 1 ;;
     esac
 }
 
-readonly FONT_IDS="iosevka-term-ss05 jetbrains-nerd symbols-nerd"
+readonly FONT_IDS="commit-mono jetbrains-mono symbols-nerd"
 
 font_family() {
     case "${1:-$FONT_CHOICE}" in
-        jetbrains) printf '%s\n' 'JetBrainsMono Nerd Font' ;;
-        *) printf '%s\n' 'Iosevka Term SS05' ;;
+        jetbrains) printf '%s\n' 'JetBrains Mono' ;;
+        *) printf '%s\n' 'CommitMonoV143' ;;
     esac
 }
 
@@ -766,21 +787,47 @@ font_install_dir() {
     fi
 }
 
+# Marker content for an id: its tag and every record's checksum, so a change
+# to any pinned download reinstalls the font.
+font_expected_marker() {
+    local id="$1" tag url checksum files first="" sums=""
+    while IFS='|' read -r tag url checksum files; do
+        first="${first:-$tag}"
+        sums+="${sums:+,}$checksum"
+    done < <(font_asset "$id")
+    [[ -n "$first" ]] || return 1
+    printf '%s %s\n' "$first" "$sums"
+}
+
 font_installed() {
-    local id="$1" asset tag url checksum files dir file
-    asset=$(font_asset "$id") || return 1
-    IFS='|' read -r tag url checksum files <<< "$asset"
-    [[ "$(cat "$FONT_MARKER_DIR/$id.version" 2>/dev/null)" == "$tag $checksum" ]] || return 1
+    local id="$1" marker tag url checksum files dir file
+    marker=$(font_expected_marker "$id") || return 1
+    [[ "$(cat "$FONT_MARKER_DIR/$id.version" 2>/dev/null)" == "$marker" ]] || return 1
     dir=$(font_install_dir "$id")
-    for file in $files; do
-        [[ -s "$dir/$file" ]] || return 1
-    done
+    while IFS='|' read -r tag url checksum files; do
+        for file in $files; do
+            [[ -s "$dir/$file" ]] || return 1
+        done
+    done < <(font_asset "$id")
+}
+
+# Exact basename match: font names may contain [], which find -name would
+# read as a pattern.
+find_extracted_file() {
+    local root="$1" name="$2" candidate
+    while IFS= read -r candidate; do
+        if [[ "${candidate##*/}" == "$name" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done < <(find "$root" -type f)
+    return 1
 }
 
 install_font_archive() {
-    local id="$1" asset tag url checksum files dir
-    asset=$(font_asset "$id") || return 1
-    IFS='|' read -r tag url checksum files <<< "$asset"
+    local id="$1" marker tag dir
+    marker=$(font_expected_marker "$id") || return 1
+    tag="${marker%% *}"
     if font_installed "$id"; then
         success "Font $id retained ($tag)"
         return 0
@@ -788,32 +835,40 @@ install_font_archive() {
     dir=$(font_install_dir "$id")
     log "Installing font $id $tag..."
     (
-        local temp_dir file source_file
+        local temp_dir url checksum files file source_file entry n=0
+        local -a staged=()
         temp_dir=$(mktemp -d) || exit 1
         trap 'rm -rf "$temp_dir"' EXIT
-        verified_download "$url" "$checksum" "$temp_dir/asset" 900 || exit 1
-        mkdir "$temp_dir/extracted" || exit 1
-        case "$url" in
-            *.zip) unzip -q "$temp_dir/asset" -d "$temp_dir/extracted" || exit 1 ;;
-            *.tar.xz) tar -xJf "$temp_dir/asset" -C "$temp_dir/extracted" || exit 1 ;;
-            *) exit 1 ;;
-        esac
-        # Check every file before replacing any installed one.
-        for file in $files; do
-            [[ -n "$(find "$temp_dir/extracted" -type f -name "$file" -print -quit)" ]] || {
-                warning "$file missing from $url"
-                exit 1
-            }
-        done
+        # Download and check every file before replacing any installed one.
+        while IFS='|' read -r tag url checksum files; do
+            n=$((n + 1))
+            mkdir -p "$temp_dir/$n/extracted" || exit 1
+            verified_download "$url" "$checksum" "$temp_dir/$n/asset" 900 || exit 1
+            case "$url" in
+                *.zip) unzip -q "$temp_dir/$n/asset" -d "$temp_dir/$n/extracted" || exit 1 ;;
+                *.tar.xz) tar -xJf "$temp_dir/$n/asset" -C "$temp_dir/$n/extracted" || exit 1 ;;
+                *.ttf|*.otf) mv "$temp_dir/$n/asset" "$temp_dir/$n/extracted/${url##*/}" || exit 1 ;;
+                *) exit 1 ;;
+            esac
+            for file in $files; do
+                source_file=$(find_extracted_file "$temp_dir/$n/extracted" "$file") || {
+                    warning "$file missing from $url"
+                    exit 1
+                }
+                staged+=("$source_file|$file")
+            done
+        done < <(font_asset "$id")
         mkdir -p "$dir" "$FONT_MARKER_DIR" || exit 1
-        for file in $files; do
-            source_file=$(find "$temp_dir/extracted" -type f -name "$file" -print -quit)
+        for entry in "${staged[@]}"; do
+            source_file="${entry%|*}"
+            file="${entry##*|}"
             install -m 644 "$source_file" "$dir/.$file.setup" || exit 1
             mv -f "$dir/.$file.setup" "$dir/$file" || exit 1
         done
-        printf '%s %s\n' "$tag" "$checksum" > "$FONT_MARKER_DIR/$id.version" || exit 1
+        printf '%s\n' "$marker" > "$FONT_MARKER_DIR/$id.version" || exit 1
     ) || return 1
     FONTS_CHANGED=true
+    note_change "font:$id"
     success "Font $id installed ($tag)"
 }
 
@@ -834,29 +889,38 @@ report_glyph_coverage() {
     fi
 }
 
-load_profile() {
-    local line
-    [[ -r "$PROFILE_FILE" ]] || return 0
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        case "$line" in
-            FONT=iosevka|FONT=jetbrains) [[ -n "$FONT_CHOICE" ]] || FONT_CHOICE="${line#FONT=}" ;;
-        esac
-    done < "$PROFILE_FILE"
+# A setting from the environment, else from ~/.env (KEY=value lines, which
+# the deployed .zshenv exports into every shell).
+env_setting() {
+    local name="$1" value="${!1:-}"
+    if [[ -z "$value" && -r "$HOME/.env" ]]; then
+        value=$(sed -nE "s/^${name}=[\"']?([A-Za-z0-9._-]+)[\"']?[[:space:]]*\$/\\1/p" "$HOME/.env" | tail -1)
+    fi
+    printf '%s\n' "$value"
 }
 
-# Flag > saved profile > one interactive question > Iosevka default.
+# Flag > SHELL_BACKUP_FONT / SHELL_BACKUP_FONT_WEIGHT > Commit Mono at 350.
+# Like NVIM_CONFIG, the choice lives in the environment (~/.zshrc.local or
+# ~/.env), never in a prompt or a saved profile; a rerun applies a change.
 resolve_font_choice() {
-    load_profile
-    if [[ -z "$FONT_CHOICE" ]] && can_prompt; then
-        prompt_tty $'Terminal font:\n1) Iosevka Term SS05 (default)\n2) JetBrainsMono Nerd Font\nChoose 1-2 [1]: '
-        case "$TTY_ANSWER" in 2|jetbrains) FONT_CHOICE=jetbrains ;; esac
-    fi
-    FONT_CHOICE="${FONT_CHOICE:-iosevka}"
-    {
-        grep -v '^FONT=' "$PROFILE_FILE" 2>/dev/null || true
-        printf 'FONT=%s\n' "$FONT_CHOICE"
-    } | deploy_file "$PROFILE_FILE" 644
-    log "Terminal font: $(font_family)"
+    local font weight
+    font="${FONT_CHOICE:-$(env_setting SHELL_BACKUP_FONT)}"
+    weight="${FONT_WEIGHT:-$(env_setting SHELL_BACKUP_FONT_WEIGHT)}"
+    case "$font" in
+        ''|commit-mono) FONT_CHOICE=commit-mono ;;
+        jetbrains) FONT_CHOICE=jetbrains ;;
+        *)
+            warning "SHELL_BACKUP_FONT=$font is not commit-mono or jetbrains; using commit-mono"
+            FONT_CHOICE=commit-mono ;;
+    esac
+    case "$weight" in
+        '') FONT_WEIGHT=350 ;;
+        300|350|400) FONT_WEIGHT="$weight" ;;
+        *)
+            warning "SHELL_BACKUP_FONT_WEIGHT=$weight is not 300, 350 or 400; using 350"
+            FONT_WEIGHT=350 ;;
+    esac
+    log "Terminal font: $(font_family) at weight $FONT_WEIGHT (SHELL_BACKUP_FONT=$FONT_CHOICE SHELL_BACKUP_FONT_WEIGHT=$FONT_WEIGHT)"
 }
 
 version_inventory() {
@@ -876,11 +940,7 @@ version_inventory() {
     if [[ -n "${HERDR_BIN:-}" ]]; then
         printf '  Herdr: %s (%s)\n' "$(tool_version "$HERDR_BIN")" "$HERDR_BIN"
     fi
-    local asset path revision
-    while IFS='|' read -r asset path; do
-        revision=$(git -C "$path" rev-parse --short HEAD 2>/dev/null || true)
-        printf '  %s: %s\n' "$asset" "${revision:-unavailable}"
-    done < <(zinit_expected_assets)
+    zinit_revisions | sed 's/^/  /'
     if [[ -f "$HOME/.local/share/zinit/zinit.git/VERSION" ]]; then
         printf '  Zinit: %s\n' "$(cat "$HOME/.local/share/zinit/zinit.git/VERSION")"
     fi
@@ -1052,10 +1112,28 @@ deploy_file() {
     fi
     backup_file "$target"
     if [[ -L "$target" ]]; then
-        cat "$temp" > "$target" && rm -f "$temp" && chmod "$mode" "$target"
+        cat "$temp" > "$target" && rm -f "$temp" && chmod "$mode" "$target" || return 1
     else
-        chmod "$mode" "$temp" && mv -f "$temp" "$target"
+        chmod "$mode" "$temp" && mv -f "$temp" "$target" || return 1
     fi
+    note_change "$target"
+}
+
+# Changes made by this run that something running may need to pick up. Stages
+# run in child shells, so the list lives in a file read by apply_reloads.
+note_change() {
+    [[ -n "${CHANGES_FILE:-}" && -w "$CHANGES_FILE" ]] || return 0
+    printf '%s\n' "$1" >> "$CHANGES_FILE"
+}
+
+changed() {
+    [[ -n "${CHANGES_FILE:-}" && -r "$CHANGES_FILE" ]] || return 1
+    grep -qxF -- "$1" "$CHANGES_FILE"
+}
+
+changed_matching() {
+    [[ -n "${CHANGES_FILE:-}" && -r "$CHANGES_FILE" ]] || return 1
+    grep -qE -- "$1" "$CHANGES_FILE"
 }
 
 # Files edited by external tools (ya, official Herdr installers): copy the file
@@ -1526,6 +1604,11 @@ install_cmux() {
 # 6. FONT INSTALLATION
 ################################################################################
 
+fontconfig_checksum() {
+    [[ -f "$FONTCONFIG_FILE" ]] || return 0
+    cksum < "$FONTCONFIG_FILE"
+}
+
 install_fonts() {
     local id failed=0 conf_before
     FONTS_CHANGED=false
@@ -1535,9 +1618,9 @@ install_fonts() {
     done
 
     if [[ "$OS_TYPE" == linux ]]; then
-        conf_before=$(cksum < "$FONTCONFIG_FILE" 2>/dev/null || true)
+        conf_before=$(fontconfig_checksum)
         deploy_fontconfig || failed=1
-        [[ "$(cksum < "$FONTCONFIG_FILE" 2>/dev/null || true)" == "$conf_before" ]] || FONTS_CHANGED=true
+        [[ "$(fontconfig_checksum)" == "$conf_before" ]] || FONTS_CHANGED=true
         # Refresh only after a change, or to repair a cache missing the font.
         if command_exists fc-cache && { [[ "$FONTS_CHANGED" == true ]] ||
             ! command_exists fc-list || [[ -z "$(fc-list "$(font_family)" family 2>/dev/null)" ]]; }; then
@@ -1571,7 +1654,7 @@ deploy_fontconfig() {
   </alias>
 FONTCONFIG_EOF
         # accept appends after the requested family, so its own glyphs win.
-        for managed in 'Iosevka Term SS05' 'JetBrainsMono Nerd Font'; do
+        for managed in 'CommitMonoV143' 'JetBrains Mono'; do
             cat << FONTCONFIG_FAMILY_EOF
   <alias>
     <family>${managed}</family>
@@ -1583,9 +1666,31 @@ FONTCONFIG_EOF
   </alias>
 FONTCONFIG_FAMILY_EOF
         done
+        # Commit Mono's per-weight sources all declare a regular weight and
+        # name it in the style instead; give other applications real weights.
+        local style_weight style
+        for style_weight in '300:light' '350:book' '400:regular' '700:bold'; do
+            for style in Regular Italic; do
+                cat << FONTCONFIG_WEIGHT_EOF
+  <match target="scan">
+    <test name="family"><string>CommitMonoV143</string></test>
+    <test name="style"><string>${style_weight%%:*} ${style}</string></test>
+    <edit name="weight" mode="assign"><const>${style_weight##*:}</const></edit>
+  </match>
+FONTCONFIG_WEIGHT_EOF
+            done
+        done
         printf '%s\n' '</fontconfig>'
     } | deploy_file "$FONTCONFIG_FILE" 644
     success "Font fallback configuration deployed ($FONTCONFIG_FILE)"
+}
+
+zinit_revisions() {
+    local asset path revision
+    while IFS='|' read -r asset path; do
+        revision=$(git -C "$path" rev-parse --short HEAD 2>/dev/null || true)
+        printf '%s: %s\n' "$asset" "${revision:-unavailable}"
+    done < <(zinit_expected_assets)
 }
 
 # The managed plugin list lives in the deployed ~/.zsh/zinit-update.zsh.
@@ -2170,12 +2275,28 @@ deploy_ghostty_config() {
     # Platform-specific fullscreen keybinding
     local fullscreen_keybind
     local platform_config
-    local font_family_name font_size
+    local font_family_name font_size font_faces font_features weight="${FONT_WEIGHT:-350}"
     font_family_name=$(font_family)
-    # Iosevka is narrower, so it gets a slightly larger size.
+    # No fallback family: Ghostty embeds the Nerd Fonts symbols, and a listed
+    # fallback would be looked up with the font-style below, which it lacks.
     case "$FONT_CHOICE" in
-        jetbrains) font_size=13.5 ;;
-        *) font_size=14 ;;
+        jetbrains)
+            font_size=13.5
+            # Variable font: the chosen weight for regular and italic, 700 for bold.
+            font_faces="font-variation = wght=${weight}
+font-variation-italic = wght=${weight}
+font-variation-bold = wght=700
+font-variation-bold-italic = wght=700"
+            font_features="font-feature = +calt" ;;
+        *)
+            font_size=14
+            # Static faces, named by weight in Commit Mono's sources. The
+            # ligatures (ss01) and arrows (ss02) are off by default in the font.
+            font_faces="font-style = ${weight} Regular
+font-style-italic = ${weight} Italic
+font-style-bold = 700 Regular
+font-style-bold-italic = 700 Italic"
+            font_features=$'font-feature = +calt\nfont-feature = +ss01\nfont-feature = +ss02' ;;
     esac
     if [[ "$OS_TYPE" == "darwin" ]]; then
         fullscreen_keybind="keybind = cmd+shift+f=toggle_fullscreen"
@@ -2186,12 +2307,13 @@ deploy_ghostty_config() {
     fi
 
     deploy_file "$HOME/.config/ghostty/config" 644 << GHOSTTY_EOF
-# Font configuration (setup.sh --font=iosevka|jetbrains). Later families are
-# fallbacks; calt keeps programming ligatures on.
+# Font: SHELL_BACKUP_FONT=commit-mono|jetbrains and SHELL_BACKUP_FONT_WEIGHT=
+# 300|350|400 (or setup.sh --font= --font-weight=), then rerun setup.sh.
+# Nerd Font icons come from the symbols font built into Ghostty.
 font-family = ${font_family_name}
-font-family = Symbols Nerd Font Mono
+${font_faces}
 font-size = ${font_size}
-font-feature = +calt
+${font_features}
 
 ${platform_config}
 shell-integration = detect
@@ -3562,6 +3684,8 @@ setup_zinit_plugins() {
 
     require_version zsh "$MIN_ZSH_VERSION" || return 1
 
+    local revisions_before
+    revisions_before=$(zinit_revisions)
     # Run zsh to download and install all plugins
     log "Installing plugins (this may take a minute)..."
     if ! SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE=1 zsh -c '
@@ -3597,6 +3721,7 @@ setup_zinit_plugins() {
         error "Zinit plugin bootstrap incomplete"
     fi
 
+    [[ "$(zinit_revisions)" == "$revisions_before" ]] || note_change zinit-plugins
     local zinit_version
     zinit_version=$(cat "$HOME/.local/share/zinit/zinit.git/VERSION")
     version_gte "$zinit_version" 3.17.0 || return 1
@@ -3861,8 +3986,8 @@ print_summary() {
     printf '\nVersions after setup:\n'
     version_inventory
     printf '\nLogs: %s\nBackups: %s\n' "$SETUP_LOG" "$BACKUP_DIR"
-    printf '%s\n' 'Reload: exec zsh | Plugins: zinit list; ya pkg list' \
-        "Terminal font: $(font_family) (switch: setup.sh --font=iosevka|jetbrains)" \
+    printf '%s\n' 'Plugins: zinit list; ya pkg list' \
+        "Terminal font: $(font_family) at weight $FONT_WEIGHT (SHELL_BACKUP_FONT=commit-mono|jetbrains, SHELL_BACKUP_FONT_WEIGHT=300|350|400 in ~/.zshrc.local or ~/.env, then rerun)" \
         'Local preferences: ~/.zshrc.local and ~/.config/ghostty/config.local' \
         'Neovim: vi opens NVIM_CONFIG (nvim-lazyvim or nvim-kickstart); lv, kv, nvims. Plugins install on first start' \
         'Any SSH/Mosh client: ssh -t <host> shell-backup-attach [session] (see README.md)' \
@@ -3874,6 +3999,67 @@ print_summary() {
     fi
 }
 
+# What this run changed decides what gets reloaded, so a rerun with nothing
+# new reloads nothing. Herdr and Ghostty on Linux are reloaded in place; Ghostty
+# and cmux on macOS expose no reload command, so the shortcut is printed. Shell
+# files are picked up by a new zsh started in this terminal (exit returns to
+# the previous shell); without a terminal, or with --ci, the command is printed.
+apply_reloads() {
+    local reloaded=0
+    if changed "${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}" && [[ "$HERDR_READY" == true ]]; then
+        if "$HERDR_BIN" status server 2>/dev/null | grep -q '^status: running'; then
+            if "$HERDR_BIN" server reload-config >/dev/null 2>&1; then
+                success 'Herdr: configuration reloaded in the running server'
+            else
+                warning 'Herdr: reload failed; run: herdr server reload-config'
+            fi
+        else
+            log 'Herdr: no running server; the new configuration applies on the next start'
+        fi
+        reloaded=1
+    fi
+    if changed "$HOME/.config/ghostty/config" || changed_matching '^font:'; then
+        reloaded=1
+        if [[ "$OS_TYPE" == darwin ]]; then
+            if pgrep -x ghostty >/dev/null 2>&1; then
+                warning 'Ghostty: press Cmd+Shift+, (reload_config) or restart Ghostty to apply the new configuration and fonts'
+            fi
+            if pgrep -x cmux >/dev/null 2>&1; then
+                warning 'cmux: restart it to apply the new configuration and fonts'
+            fi
+        elif ghostty_running_on_bus; then
+            if gapplication action com.mitchellh.ghostty reload-config 2>/dev/null; then
+                success 'Ghostty: configuration reloaded'
+            else
+                warning 'Ghostty: press Ctrl+Shift+, (reload_config) to apply the new configuration'
+            fi
+        fi
+    fi
+    if changed "$HOME/.zshenv" || changed "$HOME/.zshrc" || changed_matching "^$HOME/\.zsh/" || changed zinit-plugins; then
+        reloaded=1
+        if can_prompt; then
+            log 'Shell configuration changed: starting a new zsh here (exit returns to the previous shell)'
+            reload_shell
+        else
+            log 'Shell configuration changed: run exec zsh'
+        fi
+    fi
+    [[ "$reloaded" == 1 ]] || log 'Nothing to reload: shell and terminal configurations unchanged'
+}
+
+# Ghostty registers com.mitchellh.ghostty on the session bus while it runs.
+# gapplication would launch Ghostty when it is not running, so check first.
+ghostty_running_on_bus() {
+    command_exists gdbus && command_exists gapplication || return 1
+    gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+        --method org.freedesktop.DBus.NameHasOwner com.mitchellh.ghostty 2>/dev/null | grep -q true
+}
+
+reload_shell() {
+    rm -f "${CHANGES_FILE:-}"  # exec skips the EXIT trap
+    exec zsh -l </dev/tty >/dev/tty 2>&1
+}
+
 ################################################################################
 # 18. MAIN EXECUTION
 ################################################################################
@@ -3881,6 +4067,8 @@ print_summary() {
 main() {
     parse_args "$@"
     initialize_log
+    CHANGES_FILE=$(mktemp)
+    trap 'rm -f "$CHANGES_FILE"' EXIT
 
     # Warn if running as root (configs will go to root's $HOME)
     if [[ "$(id -u)" -eq 0 ]]; then
@@ -3941,6 +4129,7 @@ main() {
     run_stage 'Yazi plugins' setup_yazi_plugins
     run_stage Verification verify_installation
     print_summary
+    apply_reloads
     [[ "$SETUP_FAILED" != true ]]
 
 }

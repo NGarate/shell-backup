@@ -16,7 +16,7 @@ bash setup.sh
 bash setup.sh --ci             # No optional prompts; also --non-interactive
 bash setup.sh --with-cmux      # Also install cmux on macOS (kept updated once installed)
 # --with-herdr is accepted and ignored: Herdr is installed on both platforms
-bash setup.sh --font=jetbrains # Terminal font: iosevka (default) or jetbrains
+SHELL_BACKUP_FONT=jetbrains SHELL_BACKUP_FONT_WEIGHT=300 bash setup.sh # Font and weight for this run
 ```
 
 | Platform | Terminal | Persistent sessions | Extra |
@@ -30,19 +30,37 @@ lazygit and the tree-sitter CLI, and the fonts below.
 
 ## Fonts and icons
 
-Setup installs both terminal fonts so you can switch without downloading again:
+Setup installs both terminal fonts so you can switch without downloading again.
+Like `NVIM_CONFIG`, the choice lives in two environment variables that you set
+in `~/.zshrc.local` (`export SHELL_BACKUP_FONT=jetbrains`) or `~/.env`
+(`SHELL_BACKUP_FONT=jetbrains`), then rerun `setup.sh`; there is no prompt and
+nothing is saved by setup. `--font=` and `--font-weight=` override them for one
+run.
 
-| `--font=` | Family | Notes |
+| `SHELL_BACKUP_FONT` | Family | Notes |
 |---|---|---|
-| `iosevka` (default) | Iosevka Term SS05 | Ligatures on; narrow, so more agent panes fit side by side. Covers Claude Code's ⏺ ⎿ ⏵ ✻ glyphs natively. |
-| `jetbrains` | JetBrainsMono Nerd Font | The previous look with Nerd Font icons included. |
+| `commit-mono` (default) | Commit Mono (`CommitMonoV143`) | The original font, one static face per weight from the Commit Mono sources; bold is the 700 face. Its ligatures (`ss01`) and arrows (`ss02`) are turned on. |
+| `jetbrains` | JetBrains Mono | The original variable font; the weight is applied with `font-variation`. Ligatures via `calt`. |
 
-Symbols Nerd Font Mono is installed too and configured as the icon fallback
-for Ghostty/cmux. On Linux, `~/.config/fontconfig/conf.d/60-shell-backup.conf`
-makes other applications fall back the same way: the chosen font, then Nerd
-icons, then Noto Sans Symbols2 and Noto Color Emoji. The first interactive run
-asks which font to use. The choice is saved in `~/.config/shell-backup/profile`,
-and later runs (including `--ci`) reuse it until you pass another `--font`.
+`SHELL_BACKUP_FONT_WEIGHT` is `300`, `350` (default) or `400` and applies to
+regular and italic text in Ghostty and cmux.
+
+Setup applies its own changes at the end of a run, and only those: a changed
+Herdr config is reloaded in the running server, a changed Ghostty config or new
+fonts are reloaded in a running Ghostty on Linux (on macOS it prints the
+shortcut, Cmd+Shift+comma, since Ghostty and cmux have no reload command), and
+changed shell files start a new zsh in the terminal (`exit` returns to the
+previous shell; with `--ci` or no terminal it prints `exec zsh` instead). A
+rerun that changes nothing reloads nothing.
+
+Neither family is Nerd-patched: Ghostty, and cmux through libghostty, embed
+the Nerd Fonts symbols as an always-on fallback, so Neovim, Starship, eza and
+the other terminal tools get their icons in both. Symbols Nerd Font Mono is
+installed for other applications. Claude Code's ⏺ ⎿ ⏵ ✻ glyphs come from the
+system fonts (macOS) or Noto Sans Symbols2 (Linux). On Linux,
+`~/.config/fontconfig/conf.d/60-shell-backup.conf` makes other applications
+fall back the same way: the chosen font, then Nerd icons, then Noto Sans
+Symbols2 and Noto Color Emoji, and gives the Commit Mono faces real weights.
 
 Icons are drawn by the terminal you are looking at, not by the host. A remote
 client (TermRover, Termux, another laptop) needs a Nerd Font of its own, or the
@@ -158,7 +176,6 @@ Each computer keeps its own sessions; cmux workspaces remain local to the Mac.
 | `~/.env` | Local environment variables, loaded by generated `~/.zshenv` |
 | `~/.config/ghostty/config.local` | Local rendering overrides for Ghostty/cmux |
 | `~/.config/starship.toml` | Prompt theme (Nerd Font); `starship-plain.toml` is the plain-symbol variant |
-| `~/.config/shell-backup/profile` | Saved setup choices (`FONT=iosevka` or `FONT=jetbrains`) |
 | `~/.config/yazi/{init.lua,yazi.toml}` | File manager configuration |
 | `~/.config/nvim-lazyvim`, `~/.config/nvim-kickstart` | Neovim configs; yours to edit (setup only patches the lines it manages) |
 | `~/.gitconfig` | Setup sets the editor, merge and diff tool to Neovim; other keys are untouched |

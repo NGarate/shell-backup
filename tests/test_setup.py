@@ -36,6 +36,8 @@ case "$1 $2" in
   '--version ') echo "herdr ${MOCK_VERSION:-0.9.5}"; exit "${VERSION_FAIL:-0}" ;;
   '--help ') exit 0 ;;
   'integration status') cat "$FIXTURE"; exit "${STATUS_FAIL:-0}" ;;
+  'status server') echo "status: ${HERDR_SERVER:-stopped}" ;;
+  'server reload-config') echo reload-config >> "$CALLS" ;;
   'integration install')
     echo "$3" >> "$CALLS"
     [[ "$3" != "${FAIL_TARGET:-}" ]] || exit 1
@@ -856,32 +858,103 @@ print_summary
         self.assertIn('finished with failures', output)
         self.assertNotIn('SETUP COMPLETE', output)
 
-    def test_font_flag_saved_profile_and_default(self):
-        self.run_shell('parse_args --font=jetbrains; NON_INTERACTIVE=true; resolve_font_choice; [[ "$FONT_CHOICE" == jetbrains ]]')
-        profile = self.home / '.config/shell-backup/profile'
-        self.assertEqual(profile.read_text(), 'FONT=jetbrains\n')
-        # Later --ci runs keep the saved choice; an explicit flag replaces it.
-        self.run_shell('parse_args --ci; resolve_font_choice; [[ "$FONT_CHOICE" == jetbrains ]]')
-        self.run_shell('parse_args --ci --font=iosevka; resolve_font_choice; [[ "$FONT_CHOICE" == iosevka ]]')
-        self.assertEqual(profile.read_text(), 'FONT=iosevka\n')
-        profile.unlink()
-        self.run_shell('can_prompt() { return 0; }\nread_tty() { echo 2; }\nresolve_font_choice\n[[ "$FONT_CHOICE" == jetbrains ]]')
-        profile.unlink()
-        self.run_shell('NON_INTERACTIVE=true; resolve_font_choice; [[ "$FONT_CHOICE" == iosevka ]]')
-        result = subprocess.run(['bash', '-c', self.base + 'parse_args --font=comic'], env=self.env,
-                                text=True, capture_output=True, timeout=10)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Unknown font: comic', result.stdout + result.stderr)
+    def test_deploy_file_records_created_and_changed_files(self):
+        changes = self.home / 'changes'
+        changes.touch()
+        code = f'CHANGES_FILE={shlex.quote(str(changes))}\n'
+        self.run_shell(code + 'echo one | deploy_file "$HOME/a.txt" 644; echo one | deploy_file "$HOME/a.txt" 644')
+        self.assertEqual(changes.read_text(), f'{self.home}/a.txt\n')
+        self.run_shell(code + 'echo two | deploy_file "$HOME/a.txt" 644')
+        self.assertEqual(changes.read_text().count('a.txt'), 2)
+        # Without a changes file (plain function calls) nothing is recorded or fails.
+        self.run_shell('echo three | deploy_file "$HOME/b.txt" 644')
+
+    def test_apply_reloads_follows_recorded_changes(self):
+        changes = self.home / 'changes'
+        base = f'CHANGES_FILE={shlex.quote(str(changes))}\nHERDR_BIN="$HOME/.local/bin/herdr"; HERDR_READY=true\n'
+        changes.write_text('')
+        self.assertIn('Nothing to reload', self.run_shell(base + 'apply_reloads'))
+        # Herdr: reload only a running server.
+        changes.write_text(f'{self.home}/.config/herdr/config.toml\n')
+        output = self.run_shell(base + 'apply_reloads')
+        self.assertIn('no running server', output)
+        self.assertEqual(self.calls(), [])
+        output = self.run_shell(base + 'HERDR_SERVER=running apply_reloads')
+        self.assertIn('Herdr: configuration reloaded', output)
+        self.assertEqual(self.calls(), ['reload-config'])
+        # Ghostty on Linux: D-Bus reload only when it owns its bus name.
+        changes.write_text(f'{self.home}/.config/ghostty/config\n')
+        self.executable('gdbus', '#!/bin/bash\necho "(${GHOSTTY_ON_BUS:-false},)"\n')
+        self.executable('gapplication', '#!/bin/bash\necho "gapplication $*" >> "$CALLS"\n')
+        (self.home / 'calls').unlink()
+        output = self.run_shell(base + 'apply_reloads')
+        self.assertNotIn('Ghostty', output)
+        self.assertEqual(self.calls(), [])
+        output = self.run_shell(base + 'GHOSTTY_ON_BUS=true apply_reloads')
+        self.assertIn('Ghostty: configuration reloaded', output)
+        self.assertEqual(self.calls(), ['gapplication action com.mitchellh.ghostty reload-config'])
+        # macOS: no reload command exists; the shortcut is printed for running apps.
+        changes.write_text('font:commit-mono\n')
+        self.executable('pgrep', '#!/bin/bash\n[[ "$2" == ghostty ]]\n')
+        output = self.run_shell(base + 'OS_TYPE=darwin; apply_reloads')
+        self.assertIn('Ghostty: press Cmd+Shift+,', output)
+        self.assertNotIn('cmux', output)
+        # Shell files: a new zsh with a terminal, the command otherwise.
+        changes.write_text(f'{self.home}/.zshrc\n')
+        output = self.run_shell(base + 'can_prompt() { return 1; }\napply_reloads')
+        self.assertIn('run exec zsh', output)
+        changes.write_text('zinit-plugins\n')
+        output = self.run_shell(base + 'can_prompt() { return 0; }\nreload_shell() { echo NEW_ZSH; }\napply_reloads')
+        self.assertIn('starting a new zsh here', output)
+        self.assertIn('NEW_ZSH', output)
+        changes.write_text(f'{self.home}/.config/starship.toml\n')
+        self.assertIn('Nothing to reload', self.run_shell(base + 'apply_reloads'))
+
+    def test_font_and_weight_from_flag_environment_or_default(self):
+        """Flag > SHELL_BACKUP_FONT(_WEIGHT) in the environment or ~/.env > Commit Mono at 350; no prompt."""
+        chosen = 'resolve_font_choice; echo "$FONT_CHOICE/$FONT_WEIGHT"\n'
+        never = 'can_prompt() { return 0; }\nread_tty() { exit 98; }\n'
+        self.assertEqual(self.run_shell(never + chosen).splitlines()[-1], 'commit-mono/350')
+        self.assertEqual(self.run_shell(never + 'parse_args --font=jetbrains --font-weight=300\n' + chosen).splitlines()[-1], 'jetbrains/300')
+        env = dict(self.env, SHELL_BACKUP_FONT='jetbrains', SHELL_BACKUP_FONT_WEIGHT='300')
+        result = subprocess.run(['bash', '-c', self.base + never + chosen], env=env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.stdout.splitlines()[-1], 'jetbrains/300', result.stderr)
+        # The flag wins over the environment for one run.
+        result = subprocess.run(['bash', '-c', self.base + 'parse_args --font=commit-mono\n' + chosen], env=env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.stdout.splitlines()[-1], 'commit-mono/300', result.stderr)
+        # ~/.env is read when the variable is not exported yet.
+        (self.home / '.env').write_text('# fonts\nSHELL_BACKUP_FONT=jetbrains\nSHELL_BACKUP_FONT_WEIGHT="300"\n')
+        self.assertEqual(self.run_shell(chosen).splitlines()[-1], 'jetbrains/300')
+        (self.home / '.env').write_text('SHELL_BACKUP_FONT=comic\nSHELL_BACKUP_FONT_WEIGHT=375\n')
+        output = self.run_shell(chosen)
+        self.assertEqual(output.splitlines()[-1], 'commit-mono/350')
+        self.assertIn('SHELL_BACKUP_FONT=comic is not commit-mono or jetbrains', output)
+        self.assertIn('SHELL_BACKUP_FONT_WEIGHT=375 is not 300, 350 or 400', output)
+        for flag, message in (('--font=iosevka', 'Unknown font: iosevka'), ('--font-weight=375', 'Unknown font weight: 375')):
+            result = subprocess.run(['bash', '-c', self.base + 'parse_args ' + flag], env=self.env,
+                                    text=True, capture_output=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(message, result.stdout + result.stderr)
 
     def test_terminal_config_uses_font_fallback_and_ssh_terminfo(self):
         config = self.home / '.config/ghostty/config'
         self.run_shell('deploy_ghostty_config')
         text = config.read_text()
-        self.assertIn('font-family = Iosevka Term SS05\nfont-family = Symbols Nerd Font Mono\n', text)
-        self.assertIn('font-feature = +calt', text)
+        # Icons come from Ghostty's built-in symbols font: no fallback family, which
+        # the font-style lines would otherwise apply to. Commit Mono's ligature sets are on.
+        self.assertIn('font-family = CommitMonoV143\nfont-style = 350 Regular\nfont-style-italic = 350 Italic\n'
+                      'font-style-bold = 700 Regular\nfont-style-bold-italic = 700 Italic\nfont-size = 14\n'
+                      'font-feature = +calt\nfont-feature = +ss01\nfont-feature = +ss02\n', text)
+        self.assertNotIn('Symbols Nerd Font Mono', text)
         self.assertIn('shell-integration-features = ssh-terminfo,ssh-env', text)
-        self.run_shell('FONT_CHOICE=jetbrains; deploy_ghostty_config')
-        self.assertIn('font-family = JetBrainsMono Nerd Font\n', config.read_text())
+        self.run_shell('FONT_CHOICE=commit-mono; FONT_WEIGHT=300; deploy_ghostty_config')
+        self.assertIn('font-style = 300 Regular\nfont-style-italic = 300 Italic\n', config.read_text())
+        self.run_shell('FONT_CHOICE=jetbrains; FONT_WEIGHT=400; deploy_ghostty_config')
+        text = config.read_text()
+        self.assertIn('font-family = JetBrains Mono\nfont-variation = wght=400\nfont-variation-italic = wght=400\n'
+                      'font-variation-bold = wght=700\nfont-variation-bold-italic = wght=700\nfont-size = 13.5\nfont-feature = +calt\n', text)
+        self.assertNotIn('font-style', text)
+        self.assertNotIn('ss01', text)
 
     def font_fixture(self, names):
         archive = self.home / 'fonts.zip'
@@ -912,11 +985,36 @@ print_summary
         self.assertIn('B.ttf missing', output)
         self.assertEqual((installed / 'A.ttf').read_text(), 'font A.ttf')
 
+    def test_font_bare_files_from_several_records(self):
+        """An id may pin several downloads; bare font files and names with [] are handled."""
+        files = {'CommitMonoV143-350Regular.otf': 'font 350', 'JetBrainsMono[wght].ttf': 'font wght'}
+        for name, content in files.items():
+            (self.home / name).write_text(content)
+        digests = {name: hashlib.sha256((self.home / name).read_bytes()).hexdigest() for name in files}
+        manifest = 'font_asset() { printf "%s\\n" ' + ' '.join(
+            f"'c0ffee|https://example.invalid/{name}|{digest}|{name}'" for name, digest in digests.items()) + '; }\n'
+        # retry curl ... URL -o destination: the URL is the third argument from the end.
+        fetch = 'retry() { local url="${@: -3:1}"; cp "$HOME/${url##*/}" "${@: -1}"; }\n'
+        self.run_shell(manifest + fetch + 'install_font_archive fixture\nfont_installed fixture')
+        installed = self.home / '.local/share/fonts/shell-backup/fixture'
+        self.assertEqual(sorted(p.name for p in installed.iterdir()), sorted(files))
+        self.assertEqual((installed / 'JetBrainsMono[wght].ttf').read_text(), 'font wght')
+        self.assertEqual((self.home / '.local/share/shell-backup/fonts/fixture.version').read_text(),
+                         'c0ffee ' + ','.join(digests.values()) + '\n')
+        output = self.run_shell(manifest + 'retry() { exit 98; }\ninstall_font_archive fixture')
+        self.assertIn('retained (c0ffee)', output)
+        # A changed checksum in any record reinstalls; a failed download keeps the files.
+        changed = manifest.replace(digests['JetBrainsMono[wght].ttf'], 'b' * 64)
+        self.run_shell(changed + fetch + '! install_font_archive fixture\n! font_installed fixture')
+        self.assertEqual((installed / 'JetBrainsMono[wght].ttf').read_text(), 'font wght')
+
     def test_font_manifest_coverage(self):
         self.run_shell(r'''for id in $FONT_IDS; do
- asset=$(font_asset "$id")
- [[ "$asset" =~ ^v[0-9.]+\|https://github.com/[^|]+\.(zip|tar\.xz)\|[0-9a-f]{64}\|[^|]+\.ttf$ ]]
+ while IFS= read -r asset; do
+  [[ "$asset" =~ ^[v0-9a-f.]+\|https://(github\.com|raw\.githubusercontent\.com)/[^|]+\.(zip|tar\.xz|otf)\|[0-9a-f]{64}\|[^|]+\.(ttf|otf)$ ]]
+ done < <(font_asset "$id")
 done
+[[ "$(font_asset commit-mono | wc -l)" == 8 ]]
 ! font_asset unknown
 ''')
 
@@ -926,8 +1024,12 @@ done
         root = ElementTree.fromstring(conf.read_text())
         aliases = {alias.findtext('family'): alias for alias in root.findall('alias')}
         prefer = [family.text for family in aliases['monospace'].find('prefer')]
-        self.assertEqual(prefer, ['JetBrainsMono Nerd Font', 'Symbols Nerd Font Mono', 'Noto Sans Symbols2', 'Noto Color Emoji'])
-        self.assertEqual(aliases['Iosevka Term SS05'].find('accept')[0].text, 'Symbols Nerd Font Mono')
+        self.assertEqual(prefer, ['JetBrains Mono', 'Symbols Nerd Font Mono', 'Noto Sans Symbols2', 'Noto Color Emoji'])
+        self.assertEqual(aliases['CommitMonoV143'].find('accept')[0].text, 'Symbols Nerd Font Mono')
+        weights = {m.find('test[@name="style"]/string').text: m.find('edit/const').text
+                   for m in root.findall('match') if m.find('test[@name="family"]/string').text == 'CommitMonoV143'}
+        self.assertEqual(weights, {'300 Regular': 'light', '300 Italic': 'light', '350 Regular': 'book', '350 Italic': 'book',
+                                   '400 Regular': 'regular', '400 Italic': 'regular', '700 Regular': 'bold', '700 Italic': 'bold'})
         self.assertTrue(list((self.home / '.backup').glob('60-shell-backup.conf.backup.*')))
 
     def test_glyph_coverage_reports_missing_codepoints(self):
@@ -1237,20 +1339,21 @@ release_asset starship darwin arm64 | grep -q apple-darwin
         self.assertEqual(sorted(p.read_text() for p in (self.home / '.backup').iterdir()), ['one\n', 'two\n'])
 
     def test_pipe_with_controlling_terminal(self):
-        self.pipe_prompt(b'2\n', 'jetbrains')
+        self.pipe_prompt(b'2\n', '[2]')
 
     def test_ctrl_c_cancels_without_consuming_pipe(self):
-        self.pipe_prompt(b'\x03', 'iosevka')
+        self.pipe_prompt(b'\x03', '[]')
 
     def test_eof_cancels_without_consuming_pipe(self):
-        self.pipe_prompt(b'\x04', 'iosevka')
+        self.pipe_prompt(b'\x04', '[]')
 
     def pipe_prompt(self, answer, expected):
-        # stdin carries shell code, while the font question must read its
-        # answer through /dev/tty. The trailing command must still be interpreted.
+        # stdin carries shell code, while a question (the macOS Ctrl+Space offer)
+        # must read its answer through /dev/tty. The trailing command must still
+        # be interpreted.
         pid, master = pty.fork()
         if pid == 0:
-            code = self.base + 'resolve_font_choice\necho "CHOSEN=$FONT_CHOICE"\necho PIPE_CONTENT_SURVIVED\n'
+            code = self.base + 'prompt_tty "Choose 1-2 [1]: "\necho "CHOSEN=[$TTY_ANSWER]"\necho PIPE_CONTENT_SURVIVED\n'
             producer = 'printf %s ' + shlex.quote(code) + ' | bash'
             os.execve('/bin/bash', ['bash', '-c', producer], self.env)
         output = b''
