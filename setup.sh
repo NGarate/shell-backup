@@ -359,12 +359,10 @@ install_release_tool() {
             *.zip) unzip -q "$temp_dir/asset" -d "$temp_dir" || exit 1 ;;
             *) mv "$temp_dir/asset" "$temp_dir/$name" || exit 1 ;;
         esac
-        for binary in "$name"; do
-            source_binary=$(find "$temp_dir" -type f -name "$binary" -print -quit)
-            [[ -n "$source_binary" ]] || exit 1
-            chmod 755 "$source_binary" || exit 1
-            require_version "$source_binary" "$target_version" || exit 1
-        done
+        source_binary=$(find "$temp_dir" -type f -name "$name" -print -quit)
+        [[ -n "$source_binary" ]] || exit 1
+        chmod 755 "$source_binary" || exit 1
+        require_version "$source_binary" "$target_version" || exit 1
         # Verify both executables before replacing either one.
         if [[ -n "$companion" ]]; then
             source_binary=$(find "$temp_dir" -type f -name "$companion" -print -quit)
