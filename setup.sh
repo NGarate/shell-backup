@@ -196,13 +196,19 @@ record_result() {
 }
 
 # Run fallible stages in a child shell with errexit active. Calling a function
-# directly in an `if` would disable errexit throughout that function.
+# directly in an `if` would disable errexit throughout that function, and so
+# would `( ... ) || status=$?`, so errexit is switched off in the parent around
+# a plain subshell instead. The subshell stays in the foreground: a background
+# child ignores SIGINT, and so did every curl, apt or brew inside it, which
+# left Ctrl+C without effect until the stage ended. Stages read no stdin, so
+# the script piped from curl is never consumed.
 run_stage() {
-    local label="$1" pid status=0
+    local label="$1" status=0
     shift
-    ( set -e; "$@" ) &
-    pid=$!
-    wait "$pid" || status=$?
+    set +e
+    ( set -e; "$@" ) </dev/null
+    status=$?
+    set -e
     if [[ "$status" == 0 ]]; then
         record_result "$label" verified
     elif [[ "$status" == 3 ]]; then

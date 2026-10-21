@@ -337,6 +337,34 @@ run_stage following true
 ''')
         self.assertIn('following: verified', output)
 
+    def test_ctrl_c_interrupts_a_running_stage(self):
+        # Ctrl+C sends SIGINT to the whole process group; a stage must stop at
+        # once and the run must not continue with later stages.
+        marker = self.home / 'stage-started'
+        code = self.base + f'''slow() {{ touch {shlex.quote(str(marker))}; sleep 5; touch "$HOME/stage-finished"; }}
+run_stage slow slow
+touch "$HOME/parent-continued"
+'''
+        process = subprocess.Popen(['bash', '-c', code], env=self.env, text=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
+                                   preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+        try:
+            deadline = time.monotonic() + 5
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(marker.exists())
+            started = time.monotonic()
+            os.killpg(process.pid, signal.SIGINT)
+            output, _ = process.communicate(timeout=10)
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+        self.assertLess(time.monotonic() - started, 3, output)
+        self.assertEqual(process.returncode, -signal.SIGINT, output)
+        self.assertFalse((self.home / 'stage-finished').exists(), output)
+        self.assertFalse((self.home / 'parent-continued').exists(), output)
+
     def test_old_release_updates_and_second_run_retains(self):
         self.executable('fzf', '#!/bin/bash\necho 0.10.0\n')
         fixture = self.home / 'payload'
