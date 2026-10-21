@@ -649,6 +649,90 @@ brew() { [[ "$1" == list ]] && return 1; exit 98; }
 """)
         self.assertIn('Ghostty outside Homebrew is below target', output)
 
+    def test_macos_brew_external_tool_kept_or_replaced(self):
+        """A tool outside Homebrew stays when it meets the target; below it the formula is installed."""
+        def starship(version):
+            self.executable('starship', f'#!/bin/bash\necho "starship {version}"\n')
+        brew = r"""OS_TYPE=darwin
+brew() {
+    echo "brew $*" >> "$CALLS"
+    case "$1" in
+        list) return 1 ;;
+        --prefix) echo /opt/homebrew ;;
+        install) [[ -z "${BREW_WINS:-}" ]] || printf '#!/bin/bash\necho "starship 1.26.0"\n' > "$HOME/.local/bin/starship" ;;
+    esac
+}
+"""
+        starship('1.23.0')
+        output = self.run_shell(brew + 'brew_install_or_upgrade starship starship\n')
+        self.assertIn('starship exists outside Homebrew; skipping', output)
+        self.assertEqual(self.calls(), ['brew list starship'])
+
+        starship('1.26.0')
+        (self.home / 'calls').unlink()
+        output = self.run_shell(brew + 'brew_install_or_upgrade starship starship 1.26.0\n')
+        self.assertIn('starship retained outside Homebrew (1.26.0)', output)
+        self.assertEqual(self.calls(), ['brew list starship'])
+
+        starship('1.23.0')
+        (self.home / 'calls').unlink()
+        output = self.run_shell(brew + 'BREW_WINS=1 brew_install_or_upgrade starship starship 1.26.0\n')
+        self.assertIn('starship 1.23.0 outside Homebrew is below 1.26.0; installing starship via Homebrew', output)
+        self.assertIn('starship installed via Homebrew', output)
+        self.assertEqual(self.calls(), ['brew list starship', 'brew install starship'])
+
+        starship('1.23.0')
+        (self.home / 'calls').unlink()
+        output = self.run_shell(brew + '! brew_install_or_upgrade starship starship 1.26.0\n')
+        self.assertIn(f'{self.bin}/starship (1.23.0) shadows Homebrew\'s starship on PATH', output)
+        self.assertEqual(self.calls(), ['brew list starship', 'brew install starship'])
+
+    def test_macos_starship_outside_homebrew_updated_from_release(self):
+        """Homebrew owns Starship when its formula is installed or nothing exists; an older
+        Starship from elsewhere is replaced by the pinned release binary in ~/.local/bin."""
+        fixture = self.home / 'payload'
+        fixture.mkdir()
+        binary = fixture / 'starship'
+        binary.write_text('#!/bin/bash\necho "starship 1.26.0"\n')
+        binary.chmod(0o755)
+        archive = self.home / 'archive.tar.gz'
+        with tarfile.open(archive, 'w:gz') as tar:
+            tar.add(binary, arcname='starship')
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        darwin = f"""OS_TYPE=darwin; ARCH=arm64; PKG_MANAGER=brew
+brew() {{ echo "brew $*" >> "$CALLS"; [[ "$1" != list ]] || [[ -n "${{BREW_OWNS:-}}" ]]; }}
+release_asset() {{ echo 'https://example.invalid/starship.tar.gz|{digest}'; }}
+retry() {{ cp "$HOME/archive.tar.gz" "${{@: -1}}"; }}
+"""
+        self.executable('starship', '#!/bin/bash\necho "starship 1.23.0"\n')
+        output = self.run_shell(darwin + 'install_starship\n[[ "$(tool_version starship)" == 1.26.0 ]]\n')
+        self.assertIn('starship 1.23.0 -> 1.26.0 (target 1.26.0)', output)
+        self.assertEqual(self.calls(), ['brew list starship'])
+
+        # A rerun keeps the updated binary without downloading again.
+        output = self.run_shell(darwin + 'retry() { exit 98; }\ninstall_starship\n')
+        self.assertIn('starship retained (1.26.0)', output)
+
+        # Homebrew's own Starship stays Homebrew's.
+        (self.home / 'calls').unlink()
+        self.run_shell(darwin + 'BREW_OWNS=1 install_starship\n')
+        self.assertEqual(self.calls(), ['brew list starship', 'brew list starship', 'brew outdated --quiet starship'])
+
+        # No Starship at all: the formula.
+        (self.bin / 'starship').unlink()
+        (self.home / 'calls').unlink()
+        self.run_shell(darwin + '! install_starship\n')
+        self.assertEqual(self.calls(), ['brew list starship', 'brew list starship', 'brew install starship'])
+
+    def test_macos_inventory_reports_managed_ghostty(self):
+        self.executable('ghostty', '#!/bin/bash\necho "Ghostty 1.3.2"\n')
+        app = self.home / 'Applications/Ghostty.app/Contents/MacOS'
+        app.mkdir(parents=True)
+        (app / 'ghostty').write_text('#!/bin/bash\necho "Ghostty 1.3.1"\n')
+        (app / 'ghostty').chmod(0o755)
+        output = self.run_shell('OS_TYPE=darwin\nbrew() { return 1; }\nversion_inventory\n')
+        self.assertIn('  ghostty: 1.3.1\n', output)
+
     def linux_ghostty(self, snapd, candidate, code):
         """Mocks: snap (daemon reachable or not), apt-cache policy, apt-get, dpkg-query."""
         snap_bin = self.home / 'snap/bin'
@@ -882,7 +966,9 @@ done
  done
 done
 release_asset herdr darwin arm64 >/dev/null
+release_asset starship darwin arm64 | grep -q apple-darwin
 ! release_asset herdr darwin amd64
+! release_asset starship darwin amd64
 ''')
 
     def test_lazygit_version_is_parsed_after_commit_hash(self):

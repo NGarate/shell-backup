@@ -111,10 +111,14 @@ ensure_user_local_bin_on_path() {
     esac
 }
 
+# A command found outside Homebrew is left alone, unless a minimum version is
+# given and it falls short: then the formula is installed alongside, and an
+# older binary that still shadows it on PATH is reported instead of removed.
 brew_install_or_upgrade() {
     local package_name="$1"
     local command_name="${2:-$1}"
-    local outdated
+    local min_version="${3:-}"
+    local outdated version
 
     if ! command_exists brew; then
         error "Homebrew is required to install $package_name"
@@ -132,15 +136,29 @@ brew_install_or_upgrade() {
         else
             success "$package_name already current via Homebrew"
         fi
-    elif command_exists "$command_name"; then
+    elif command_exists "$command_name" && [[ -z "$min_version" ]]; then
         warning "$command_name exists outside Homebrew; skipping Homebrew-managed update for $package_name"
+    elif command_exists "$command_name" && version_gte "$(tool_version "$command_name")" "$min_version"; then
+        success "$command_name retained outside Homebrew ($(tool_version "$command_name"))"
     else
-        log "Installing $package_name via Homebrew..."
+        if command_exists "$command_name"; then
+            version=$(tool_version "$command_name")
+            log "$command_name ${version:-of unknown version} outside Homebrew is below $min_version; installing $package_name via Homebrew..."
+        else
+            log "Installing $package_name via Homebrew..."
+        fi
         if ! brew install "$package_name"; then
             warning "$package_name installation via Homebrew failed"
             return 1
         fi
         success "$package_name installed via Homebrew"
+        if [[ -n "$min_version" ]]; then
+            version=$(tool_version "$command_name")
+            if [[ -z "$version" ]] || ! version_gte "$version" "$min_version"; then
+                warning "$(command -v "$command_name") (${version:-unknown version}) shadows Homebrew's $package_name on PATH; remove it or let /opt/homebrew/bin come first"
+                return 1
+            fi
+        fi
     fi
 }
 
@@ -246,6 +264,7 @@ release_asset() {
         yazi:linux:arm64) printf '%s\n' 'https://github.com/sxyazi/yazi/releases/download/v26.9.1/yazi-aarch64-unknown-linux-musl.zip|dd569daecaae914185f295634109295ccd25c1b42b02eb89a74f651970024f2e' ;;
         starship:linux:amd64) printf '%s\n' 'https://github.com/starship/starship/releases/download/v1.26.0/starship-x86_64-unknown-linux-musl.tar.gz|b7c232b0e8249d8e55a40beb79c5c43a7d370f3f9408bd215deb0170daeaadf3' ;;
         starship:linux:arm64) printf '%s\n' 'https://github.com/starship/starship/releases/download/v1.26.0/starship-aarch64-unknown-linux-musl.tar.gz|dc30189378d2f2e287384e8a692d3f95ad1df64cf0e8c36aa9201516028aed6b' ;;
+        starship:darwin:arm64) printf '%s\n' 'https://github.com/starship/starship/releases/download/v1.26.0/starship-aarch64-apple-darwin.tar.gz|c40b27b11f580411e068f2fa6c1be7830a387c0bc47a94d1d37f32b054c5361d' ;;
         fzf:linux:amd64) printf '%s\n' 'https://github.com/junegunn/fzf/releases/download/v0.74.3/fzf-0.74.3-linux_amd64.tar.gz|3501a595e4b5c40a6b047340a0e8f805c46fd4e61ef95ef8a136ba8c61cf6f22' ;;
         fzf:linux:arm64) printf '%s\n' 'https://github.com/junegunn/fzf/releases/download/v0.74.3/fzf-0.74.3-linux_arm64.tar.gz|4a17a17b46bd0c4873e995533de508995c11572c0be0664a5dbcf13f60463046' ;;
         fd:linux:amd64) printf '%s\n' 'https://github.com/sharkdp/fd/releases/download/v10.5.0/fd-v10.5.0-x86_64-unknown-linux-musl.tar.gz|761c72dc8e120d85b22292063be8a796e2eeb20eb3e4f38b8fa2343ccf3514a7' ;;
@@ -834,7 +853,11 @@ resolve_font_choice() {
 version_inventory() {
     local name version
     for name in git zsh fzf zoxide rg fd starship yazi ya pnpm node python3 ghostty mosh-server nvim lazygit tree-sitter; do
-        version=$(tool_version "$name")
+        if [[ "$name" == ghostty ]]; then
+            version=$(tool_version "$(ghostty_bin)")
+        else
+            version=$(tool_version "$name")
+        fi
         printf '  %s: %s\n' "$name" "${version:-absent/unknown}"
     done
     for name in $FONT_IDS; do
@@ -1251,15 +1274,21 @@ install_core_tools() {
 
 install_pnpm() {
     if [[ "$OS_TYPE" == darwin ]]; then
-        brew_install_or_upgrade pnpm pnpm || return 1
+        brew_install_or_upgrade pnpm pnpm "$PNPM_VERSION" || return 1
     else
         install_release_tool pnpm "$PNPM_VERSION" || return 1
     fi
     require_version pnpm "$PNPM_VERSION"
 }
 
+# The prompt config deployed below needs Starship $STARSHIP_VERSION, so the
+# binary is this script's to update. macOS: Homebrew owns it when the formula
+# is installed or nothing is present. A Starship from elsewhere (official
+# installer, Cargo) is retained at target; below it the pinned release binary
+# goes to ~/.local/bin, which the deployed .zshrc puts first on PATH, exactly as
+# on Linux. Nothing of the older install is removed.
 install_starship() {
-    if [[ "$OS_TYPE" == darwin ]]; then
+    if [[ "$OS_TYPE" == darwin ]] && { brew list starship &>/dev/null || ! command_exists starship; }; then
         brew_install_or_upgrade starship starship || return 1
     else
         install_release_tool starship "$STARSHIP_VERSION" || return 1
@@ -1269,7 +1298,7 @@ install_starship() {
 
 install_yazi() {
     if [[ "$OS_TYPE" == darwin ]]; then
-        brew_install_or_upgrade yazi yazi || return 1
+        brew_install_or_upgrade yazi yazi "$YAZI_VERSION" || return 1
     else
         install_release_tool yazi "$YAZI_VERSION" || return 1
     fi
@@ -1286,7 +1315,7 @@ install_yazi() {
 # so a rollback is relinking ~/.local/opt/nvim.
 install_neovim() {
     if [[ "$OS_TYPE" == darwin ]]; then
-        brew_install_or_upgrade neovim nvim || return 1
+        brew_install_or_upgrade neovim nvim "$NEOVIM_VERSION" || return 1
         require_version nvim "$NEOVIM_VERSION"
         return
     fi
@@ -1341,8 +1370,8 @@ install_neovim() {
 # nvim-treesitter main branch needs to build parsers.
 install_neovim_tools() {
     if [[ "$OS_TYPE" == darwin ]]; then
-        brew_install_or_upgrade lazygit lazygit || return 1
-        brew_install_or_upgrade tree-sitter-cli tree-sitter || return 1
+        brew_install_or_upgrade lazygit lazygit "$LAZYGIT_VERSION" || return 1
+        brew_install_or_upgrade tree-sitter-cli tree-sitter "$TREE_SITTER_VERSION" || return 1
     else
         install_release_tool lazygit "$LAZYGIT_VERSION" || return 1
         install_release_tool tree-sitter "$TREE_SITTER_VERSION" || return 1
