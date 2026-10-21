@@ -764,7 +764,9 @@ install_herdr_integration() {
     # Back up only files potentially edited by the official installer, and only
     # if it changed them. Never back up whole harness homes (credentials,
     # sessions and projects live there).
-    local file install_status=0
+    # This runs in the main shell, so a failed copy must be handled here: an
+    # unhandled error would end the whole run before its summary.
+    local file copy install_status=0
     local -a files=() snapshots=()
     case "$target" in
         opencode) files=("$directory/tui.json" "$directory/tui.jsonc") ;;
@@ -773,11 +775,17 @@ install_herdr_integration() {
         claude) files=("$directory/settings.json") ;;
     esac
     for file in "${files[@]}"; do
-        snapshots+=("$(snapshot_file "$file")")
+        if ! copy=$(snapshot_file "$file"); then
+            rm -f "${snapshots[@]}"
+            record_result "Herdr/$target" skipped "could not copy $file for a backup; not installed"
+            return 0
+        fi
+        snapshots+=("$copy")
     done
     "$HERDR_BIN" integration install "$target" </dev/null || install_status=$?
     for ((index = 0; index < ${#files[@]}; index++)); do
-        keep_snapshot_if_changed "${files[index]}" "${snapshots[index]}"
+        keep_snapshot_if_changed "${files[index]}" "${snapshots[index]}" ||
+            warning "Herdr/$target: the previous ${files[index]} could not be moved to $BACKUP_DIR; copy left at ${snapshots[index]}"
     done
     if [[ "$install_status" != 0 ]]; then
         record_result "Herdr/$target" failed 'official installer failed; rerun setup to retry'

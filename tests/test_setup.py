@@ -110,6 +110,15 @@ esac
         self.assertIn('preserved', output)
         self.assertIn('blocked', output)
 
+    def test_backup_copy_failure_skips_that_integration_only(self):
+        # setup_herdr runs in the main shell: a failed snapshot must become a
+        # recorded skip, not an errexit abort of the whole run.
+        (self.home / '.claude/settings.json').write_text('{}\n')
+        output = self.run_shell('TMPDIR="$HOME/no-such-dir" setup_herdr_integrations\necho REACHED_THE_END')
+        self.assertIn('Herdr/claude: skipped — could not copy', output)
+        self.assertIn('REACHED_THE_END', output)
+        self.assertEqual(self.calls(), ['opencode', 'hermes', 'codex'])
+
     def test_status_failure(self):
         self.env['STATUS_FAIL'] = '1'
         output = self.integrations()
