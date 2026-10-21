@@ -33,6 +33,9 @@ readonly MIN_YAZI_VERSION="26.9.1"
 readonly NVM_INSTALL_VERSION="0.40.8"
 readonly YAZI_VERSION="26.9.1"
 readonly FZF_VERSION="0.74.5"
+readonly ZOXIDE_VERSION="0.10.0"
+readonly RIPGREP_VERSION="15.2.0"
+readonly FD_VERSION="10.5.0"
 
 # Non-interactive flag (will be parsed after functions are defined)
 NON_INTERACTIVE=false
@@ -1441,9 +1444,9 @@ install_core_tools() {
 
     if [[ "$OS_TYPE" == linux ]]; then
         install_release_tool fzf "$FZF_VERSION" || return 1
-        install_release_tool zoxide 0.10.0 || return 1
-        install_release_tool rg 15.2.0 || return 1
-        install_release_tool fd 10.5.0 || return 1
+        install_release_tool zoxide "$ZOXIDE_VERSION" || return 1
+        install_release_tool rg "$RIPGREP_VERSION" || return 1
+        install_release_tool fd "$FD_VERSION" || return 1
     fi
     require_version zsh "$MIN_ZSH_VERSION" || return 1
     success "Core tools installed"
@@ -4082,7 +4085,7 @@ verify_installation() {
 
     local item name minimum
     for item in "node:$NODE_VERSION" "pnpm:$PNPM_VERSION" "starship:$STARSHIP_VERSION" \
-        "fzf:$FZF_VERSION" zoxide:0.10.0 rg:15.2.0 fd:10.5.0 "ya:$MIN_YAZI_VERSION" \
+        "fzf:$FZF_VERSION" "zoxide:$ZOXIDE_VERSION" "rg:$RIPGREP_VERSION" "fd:$FD_VERSION" "ya:$MIN_YAZI_VERSION" \
         "nvim:$NEOVIM_VERSION" "lazygit:$LAZYGIT_VERSION" "tree-sitter:$TREE_SITTER_VERSION" \
         "uv:$UV_VERSION" "python3:$PYTHON_VERSION"; do
         name="${item%%:*}"; minimum="${item#*:}"
