@@ -1146,13 +1146,19 @@ backup_path() {
     printf '%s\n' "$candidate"
 }
 
+# Backups keep each file's mode (.zshrc and .zshenv are 600) and live in a
+# directory only the user can read; an existing directory keeps its mode.
+ensure_backup_dir() {
+    [[ -d "$BACKUP_DIR" ]] || mkdir -m 700 -p "$BACKUP_DIR"
+}
+
 backup_file() {
     local file="$1"
     if [[ -f "$file" ]]; then
-        mkdir -p "$BACKUP_DIR"
+        ensure_backup_dir || return 1
         local backup_name
         backup_name=$(backup_path "$file")
-        cp "$file" "$backup_name"
+        cp -p "$file" "$backup_name" || return 1
         success "Backed up $file to $backup_name"
     fi
 }
@@ -1217,9 +1223,9 @@ keep_snapshot_if_changed() {
         rm -f "$snapshot"
         return 0
     fi
-    mkdir -p "$BACKUP_DIR"
+    ensure_backup_dir || return 1
     backup_name=$(backup_path "$file")
-    mv -f "$snapshot" "$backup_name"
+    mv -f "$snapshot" "$backup_name" || return 1
     success "Backed up previous $file to $backup_name"
 }
 
@@ -1541,7 +1547,7 @@ install_neovim() {
     # a real ~/.local/bin/nvim is backed up before the link replaces it.
     if [[ -e "$opt/nvim" && ! -L "$opt/nvim" ]]; then
         local aside
-        mkdir -p "$BACKUP_DIR" || return 1
+        ensure_backup_dir || return 1
         aside=$(backup_path "$opt/nvim")
         mv "$opt/nvim" "$aside" || return 1
         warning "Moved the unmanaged $opt/nvim to $aside"

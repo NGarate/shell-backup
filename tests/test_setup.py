@@ -490,6 +490,24 @@ configure_git_editor
         self.assertTrue(backups[0].startswith('.zshrc.backup.'))
         self.assertEqual((self.home / '.backup' / backups[0]).read_text(), 'edited by hand\n')
 
+    def test_backups_keep_the_file_mode_in_a_private_directory(self):
+        # A replaced 600 file must not become a world-readable copy in ~/.backup.
+        self.run_shell('''umask 022
+printf first | deploy_file "$HOME/.secret" 600
+printf second | deploy_file "$HOME/.secret" 600
+printf '[a]\\n' > "$HOME/edited"
+chmod 600 "$HOME/edited"
+snapshot=$(snapshot_file "$HOME/edited")
+printf '[b]\\n' > "$HOME/edited"
+keep_snapshot_if_changed "$HOME/edited" "$snapshot"
+''')
+        backups = sorted((self.home / '.backup').iterdir())
+        self.assertEqual([p.name.split('.backup.')[0] for p in backups], ['.secret', 'edited'])
+        self.assertEqual((self.home / '.backup').stat().st_mode & 0o777, 0o700)
+        for backup in backups:
+            self.assertEqual(backup.stat().st_mode & 0o777, 0o600, backup)
+        self.assertEqual(backups[0].read_text(), 'first')
+
     def test_deploy_file_writes_through_symlinks(self):
         real = self.home / 'dotfiles/zshenv'
         real.parent.mkdir()
