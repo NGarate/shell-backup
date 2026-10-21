@@ -25,8 +25,9 @@ SHELL_BACKUP_FONT=jetbrains SHELL_BACKUP_FONT_WEIGHT=300 bash setup.sh # Font an
 | macOS arm64 | Ghostty (Homebrew cask) | Herdr | cmux with `--with-cmux` |
 
 Both profiles install zsh with Zinit, Starship, Yazi with Git/Starship plugins,
-fzf, zoxide, ripgrep, fd, NVM/Node, pnpm, mosh-server, [Neovim](#neovim) with
-lazygit and the tree-sitter CLI, and the fonts below.
+fzf, zoxide, ripgrep, fd, NVM/Node, pnpm, uv with a uv-managed Python 3.14 as
+`python3`, mosh-server, [Neovim](#neovim) with lazygit and the tree-sitter CLI,
+and the fonts below.
 
 ## Fonts and icons
 
@@ -94,6 +95,13 @@ nvims file       # Pick one with fzf
 `git difftool`) and Yazi (text and code files) open Neovim through it, so
 `NVIM_CONFIG` decides the config everywhere. Set another default in
 `~/.zshrc.local` or `~/.env`; plain `nvim` still uses `~/.config/nvim`.
+
+In Yazi, opening a directory launches one GUI editor on the project, and that
+editor is also the second choice for files: Zed when its `zed` CLI exists,
+otherwise VS Code (`code`), Cursor or VSCodium. On macOS these CLIs live inside
+the app bundles until the editor's own "install command in PATH" step, so setup
+links `code`, `zed`, `cursor` and `codium` into `~/.local/bin` from
+`/Applications` or `~/Applications` when they are not on `PATH` yet.
 The launcher runs the Neovim that setup manages (`~/.local/opt/nvim` on
 Linux, Homebrew on macOS) before looking at `PATH`, so GUI apps and cron jobs
 get the same one, and it falls back to the system `vi` when Neovim is missing.
@@ -121,11 +129,12 @@ herdr session list
 herdr integration status
 ```
 
-Setup configures the prefix as **Ctrl+Space** and installs
+Setup configures the prefix as **Ctrl+Space** and the `tokyo-night` theme in
+`~/.config/herdr/config.toml` (other settings are kept), reloads a running
+Herdr server when that file changed, and installs
 `~/.local/bin/shell-backup-attach [session]`, the single remote command for every
-client (default session `personal`). Press it, then `q`, to detach and
-leave pane processes running; `?` shows bindings. Reload Herdr's configuration or
-reattach after changing the prefix. `exit` closes the pane's shell.
+client (default session `personal`). Press the prefix, then `q`, to detach and
+leave pane processes running; `?` shows bindings. `exit` closes the pane's shell.
 
 On macOS, Ctrl+Space selects the previous input source by default, so Herdr
 would never see it. While that shortcut is active, setup stops with a warning:
@@ -179,7 +188,7 @@ Each computer keeps its own sessions; cmux workspaces remain local to the Mac.
 | `~/.config/yazi/{init.lua,yazi.toml}` | File manager configuration |
 | `~/.config/nvim-lazyvim`, `~/.config/nvim-kickstart` | Neovim configs; yours to edit (setup only patches the lines it manages) |
 | `~/.gitconfig` | Setup sets the editor, merge and diff tool to Neovim; other keys are untouched |
-| `~/.config/herdr/config.toml` | Herdr configuration; setup only changes the prefix |
+| `~/.config/herdr/config.toml` | Herdr configuration; setup only sets `[keys].prefix` and `[theme].name` |
 
 Edit the heredocs in `setup.sh` for shared defaults. Generated files can be
 replaced by the next setup run, so keep machine-specific shell/terminal changes

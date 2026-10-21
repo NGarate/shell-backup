@@ -52,6 +52,9 @@ readonly CMUX_VERSION="0.65.2"
 readonly NEOVIM_VERSION="0.12.6"
 readonly LAZYGIT_VERSION="0.66.2"
 readonly TREE_SITTER_VERSION="0.27.1"
+readonly UV_VERSION="0.13.4"
+# A minor version: uv installs the newest patch it knows and upgrades it.
+readonly PYTHON_VERSION="3.14"
 
 ################################################################################
 # 2. UTILITY FUNCTIONS
@@ -284,22 +287,33 @@ release_asset() {
         lazygit:linux:amd64) printf '%s\n' 'https://github.com/jesseduffield/lazygit/releases/download/v0.66.2/lazygit_0.66.2_linux_x86_64.tar.gz|158efc9ddfa1241fab5fb3526bb442c8dc6c4b1904d73213b9e4e93e03c52034' ;;
         lazygit:linux:arm64) printf '%s\n' 'https://github.com/jesseduffield/lazygit/releases/download/v0.66.2/lazygit_0.66.2_linux_arm64.tar.gz|79a3161eeb642f0473e23db6341f7baabd4a5933e921a9c1167c5d5c765c41a4' ;;
         tree-sitter:linux:amd64) printf '%s\n' 'https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-cli-linux-x64.zip|c7e686aec16ba17053c2e6fd87600ccb10cf8ba3d055756b17e756d538e11114' ;;
+        uv:linux:amd64) printf '%s\n' 'https://github.com/astral-sh/uv/releases/download/0.13.4/uv-x86_64-unknown-linux-musl.tar.gz|28d4385f9f9d1d1c7654d85b3855e0e2615b2f6cc13136a2edff858bbdc16ff1' ;;
+        uv:linux:arm64) printf '%s\n' 'https://github.com/astral-sh/uv/releases/download/0.13.4/uv-aarch64-unknown-linux-musl.tar.gz|253a17cadcb659ae77a0fe3b9a2f1c14297528d480c421899e61e64d64f24e8f' ;;
         tree-sitter:linux:arm64) printf '%s\n' 'https://github.com/tree-sitter/tree-sitter/releases/download/v0.27.1/tree-sitter-cli-linux-arm64.zip|3c0d0113cae3fea36f2336c271cbdacbcdb349edb006319155652b9386803c55' ;;
         *) return 1 ;;
     esac
 }
 
+# A second executable shipped in the same archive and installed alongside.
+release_companion() {
+    case "$1" in
+        yazi) printf '%s\n' ya ;;
+        uv) printf '%s\n' uvx ;;
+    esac
+}
+
 install_release_tool() {
-    local name="$1" target_version="$2" before after asset url checksum
+    local name="$1" target_version="$2" before after asset url checksum companion
+    companion=$(release_companion "$name")
     before=$(tool_version "$name")
     if [[ -n "$before" ]] && version_gte "$before" "$target_version"; then
-        if [[ "$name" != yazi ]] || { [[ "$(tool_version ya)" == "$before" ]]; }; then
+        if [[ -z "$companion" ]] || { [[ "$(tool_version "$companion")" == "$before" ]]; }; then
             success "$name retained ($before)"
             return 0
         fi
-        # Avoid downgrading yazi just to repair a mismatched companion CLI.
+        # Avoid downgrading a newer tool just to repair its mismatched companion.
         if [[ "$before" != "$target_version" ]]; then
-            warning 'Newer Yazi has mismatched ya; repair that installation first'
+            warning "Newer $name has a mismatched $companion; repair that installation first"
             return 1
         fi
     fi
@@ -321,16 +335,16 @@ install_release_tool() {
             chmod 755 "$source_binary" || exit 1
             require_version "$source_binary" "$target_version" || exit 1
         done
-        # Verify both Yazi executables before replacing either one.
-        if [[ "$name" == yazi ]]; then
-            source_binary=$(find "$temp_dir" -type f -name ya -print -quit)
+        # Verify both executables before replacing either one.
+        if [[ -n "$companion" ]]; then
+            source_binary=$(find "$temp_dir" -type f -name "$companion" -print -quit)
             [[ -n "$source_binary" ]] || exit 1
             chmod 755 "$source_binary" || exit 1
             require_version "$source_binary" "$target_version" || exit 1
         fi
         mkdir -p "$HOME/.local/bin" || exit 1
         local binaries=("$name")
-        [[ "$name" != yazi ]] || binaries+=(ya)
+        [[ -z "$companion" ]] || binaries+=("$companion")
         for binary in "${binaries[@]}"; do
             source_binary=$(find "$temp_dir" -type f -name "$binary" -print -quit)
             # Rename avoids truncating binaries used by live sessions.
@@ -396,7 +410,7 @@ setup_herdr() {
     export PATH="$(dirname "$HERDR_BIN"):$PATH"
     HERDR_READY=true
     record_result Herdr verified "${before:-absent} -> $(tool_version "$HERDR_BIN"); running sessions left intact"
-    run_stage 'Herdr prefix' configure_herdr_prefix
+    run_stage 'Herdr config' configure_herdr_config
     [[ "$OS_TYPE" != darwin ]] || free_macos_ctrl_space
     run_stage 'Herdr attach helper' deploy_attach_helper
     setup_herdr_integrations
@@ -535,26 +549,15 @@ file_mode() {
     stat -L -c %a "$1" 2>/dev/null || stat -L -f %Lp "$1" 2>/dev/null
 }
 
-# Set [keys].prefix = "ctrl+space" in Herdr's TOML config, in awk so that
-# curl | bash needs nothing beyond bash and awk. Edits are limited to ordinary
-# tables and single-line strings: ambiguous layouts fail with the file kept.
-configure_herdr_prefix() {
-    # No server commands: existing clients can reload config or reattach later.
-    local path="${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}" source=/dev/null
-    local mode=644 crlf=0 trailing=1 temp errors reason program
-    if [[ -e "$path" ]]; then
-        if [[ ! -f "$path" ]]; then
-            warning "Herdr prefix: $path is not a regular file; file preserved."
-            return 1
-        fi
-        source="$path"
-        mode=$(file_mode "$path")
-        ! grep -q $'\r' "$path" || crlf=1
-        if [[ -s "$path" && -n "$(tail -c1 "$path")" ]]; then
-            trailing=0
-        fi
-    fi
-    read -r -d '' program <<'HERDR_PREFIX_AWK' || true
+# Set keys in Herdr's TOML config, in awk so that curl | bash needs nothing
+# beyond bash and awk. Edits are limited to ordinary tables and single-line
+# values: ambiguous layouts fail with the file kept. With `list`, an existing
+# list value is kept and the wanted string added when missing (Herdr 0.9.2+
+# accepts several prefixes). herdr_toml_set applies one edit from a file to a
+# file; configure_herdr_settings chains edits and deploys the result once.
+herdr_toml_set() {
+    local input="$1" output="$2" crlf="$3" trailing="$4" table="$5" key="$6" wanted="$7" list="${8:-}" program
+    read -r -d '' program <<'HERDR_SETTING_AWK' || true
 function fail(message) { print message > "/dev/stderr"; exit 1 }
 {
     line = $0
@@ -564,15 +567,18 @@ function fail(message) { print message > "/dev/stderr"; exit 1 }
 END {
     n = NR
     nl = crlf ? "\r\n" : "\n"
+    tbl = "(" table "|\"" table "\"|'" table "')"
+    k = "(" key "|\"" key "\"|'" key "')"
+    quoted = "\"" wanted "\""
     sections = 0
     for (i = 1; i <= n; i++) {
         if (index(L[i], "\"\"\"") || index(L[i], "'''"))
-            fail("multiline TOML strings require a manual prefix edit")
-        if (L[i] ~ /^[ \t]*(keys|"keys"|'keys')[ \t]*[.=]/)
-            fail("inline/dotted keys table requires a manual prefix edit")
-        if (L[i] ~ /^[ \t]*\[[ \t]*(keys|"keys"|'keys')[ \t]*\][ \t]*(#.*)?$/) { sections++; header = i }
+            fail("multiline TOML strings require a manual " key " edit")
+        if (L[i] ~ ("^[ \t]*" tbl "[ \t]*[.=]"))
+            fail("inline/dotted " table " table requires a manual " key " edit")
+        if (L[i] ~ ("^[ \t]*\\[[ \t]*" tbl "[ \t]*\\][ \t]*(#.*)?$")) { sections++; header = i }
     }
-    if (sections > 1) fail("duplicate keys tables")
+    if (sections > 1) fail("duplicate " table " tables")
     out = 0
     if (sections == 1) {
         start = header + 1
@@ -580,39 +586,38 @@ END {
         for (i = start; i <= n; i++) if (L[i] ~ /^[ \t]*\[/) { end = i; break }
         candidates = 0
         for (i = start; i < end; i++)
-            if (L[i] ~ /^[ \t]*(prefix|"prefix"|'prefix')[ \t]*=/) { candidates++; found = i }
-        if (candidates > 1) fail("duplicate prefix entries")
+            if (L[i] ~ ("^[ \t]*" k "[ \t]*=")) { candidates++; found = i }
+        if (candidates > 1) fail("duplicate " key " entries")
         if (candidates == 1) {
             line = L[found]
-            match(line, /^[ \t]*(prefix|"prefix"|'prefix')[ \t]*=[ \t]*/)
+            match(line, "^[ \t]*" k "[ \t]*=[ \t]*")
             head = substr(line, 1, RLENGTH)
             rest = substr(line, RLENGTH + 1)
-            if (rest ~ /^"/) { if (!match(rest, /^"([^"\\]|\\.)*"/)) fail("unsupported prefix value") }
-            else if (rest ~ /^'/) { if (!match(rest, /^'[^']*'/)) fail("unsupported prefix value") }
-            else if (rest ~ /^\[/) { if (!match(rest, /^\[[^\]]*\]/)) fail("multiline prefix list requires a manual prefix edit") }
-            else fail("unsupported prefix value")
+            if (rest ~ /^"/) { if (!match(rest, /^"([^"\\]|\\.)*"/)) fail("unsupported " key " value") }
+            else if (rest ~ /^'/) { if (!match(rest, /^'[^']*'/)) fail("unsupported " key " value") }
+            else if (rest ~ /^\[/ && list) { if (!match(rest, /^\[[^\]]*\]/)) fail("multiline " key " list requires a manual edit") }
+            else fail("unsupported " key " value")
             value = substr(rest, 1, RLENGTH)
             tail = substr(rest, RLENGTH + 1)
-            if (tail !~ /^[ \t]*(#.*)?$/) fail("unsupported prefix value")
+            if (tail !~ /^[ \t]*(#.*)?$/) fail("unsupported " key " value")
             if (value ~ /^\[/) {
-                # Herdr 0.9.2+: several prefixes. Keep the user's, with ctrl+space among them.
-                if (value !~ /["']ctrl\+space["']/) {
+                if (index(value, quoted) == 0 && index(value, "'" wanted "'") == 0) {
                     inner = substr(value, 2, length(value) - 2)
                     sub(/^[ \t]+/, "", inner); sub(/[ \t]+$/, "", inner)
-                    L[found] = head "[\"ctrl+space\"" (inner == "" ? "" : ", " inner) "]" tail
+                    L[found] = head "[" quoted (inner == "" ? "" : ", " inner) "]" tail
                 }
-            } else if (value != "\"ctrl+space\"" && value != "'ctrl+space'") L[found] = head "\"ctrl+space\"" tail
+            } else if (value != quoted && value != "'" wanted "'") L[found] = head quoted tail
             for (i = 1; i <= n; i++) { O[++out] = L[i]; ORIG[out] = i }
         } else {
             for (i = 1; i <= header; i++) { O[++out] = L[i]; ORIG[out] = i }
-            O[++out] = "prefix = \"ctrl+space\""; ORIG[out] = 0
+            O[++out] = key " = " quoted; ORIG[out] = 0
             for (i = header + 1; i <= n; i++) { O[++out] = L[i]; ORIG[out] = i }
         }
     } else {
         for (i = 1; i <= n; i++) { O[++out] = L[i]; ORIG[out] = i }
         if (n > 0) { O[++out] = ""; ORIG[out] = 0 }
-        O[++out] = "[keys]"; ORIG[out] = 0
-        O[++out] = "prefix = \"ctrl+space\""; ORIG[out] = 0
+        O[++out] = "[" table "]"; ORIG[out] = 0
+        O[++out] = key " = " quoted; ORIG[out] = 0
     }
     for (j = 1; j <= out; j++) {
         i = ORIG[j]
@@ -622,28 +627,67 @@ END {
         printf "%s%s", O[j], ending
     }
 }
-HERDR_PREFIX_AWK
-    temp=$(mktemp) || return 1
-    errors=$(mktemp) || { rm -f "$temp"; return 1; }
-    if ! awk -v crlf="$crlf" -v trailing="$trailing" "$program" "$source" > "$temp" 2> "$errors"; then
-        reason=$(cat "$errors")
-        rm -f "$temp" "$errors"
-        warning "Herdr prefix: ${reason:-config could not be edited}; file preserved."
-        return 1
-    fi
-    rm -f "$errors"
-    if [[ -f "$path" ]] && cmp -s "$temp" "$path"; then
-        rm -f "$temp"
-        log 'Herdr prefix already set to ctrl+space; config preserved.'
-    elif deploy_file "$path" "${mode:-644}" < "$temp"; then
-        rm -f "$temp"
-        success "Herdr prefix saved as ctrl+space: $path"
-    else
-        rm -f "$temp"
-        return 1
-    fi
-    log 'Herdr prefix: Ctrl+Space.'
+HERDR_SETTING_AWK
+    awk -v crlf="$crlf" -v trailing="$trailing" -v table="$table" -v key="$key" -v wanted="$wanted" \
+        -v list="${list:+1}" "$program" "$input" > "$output"
 }
+
+# configure_herdr_settings <label> <table|key|value[|list]>...
+configure_herdr_settings() {
+    local label="$1"
+    shift
+    local path="${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}" source=/dev/null
+    local mode=644 crlf=0 trailing=1 current next errors reason edit table key wanted list summary=""
+    if [[ -e "$path" ]]; then
+        if [[ ! -f "$path" ]]; then
+            warning "$label: $path is not a regular file; file preserved."
+            return 1
+        fi
+        source="$path"
+        mode=$(file_mode "$path")
+        ! grep -q $'\r' "$path" || crlf=1
+        if [[ -s "$path" && -n "$(tail -c1 "$path")" ]]; then
+            trailing=0
+        fi
+    fi
+    current=$(mktemp) || return 1
+    errors=$(mktemp) || { rm -f "$current"; return 1; }
+    cat "$source" > "$current" || { rm -f "$current" "$errors"; return 1; }
+    for edit in "$@"; do
+        IFS='|' read -r table key wanted list <<< "$edit"
+        summary+="${summary:+, }$key $wanted"
+        next=$(mktemp) || { rm -f "$current" "$errors"; return 1; }
+        if ! herdr_toml_set "$current" "$next" "$crlf" "$trailing" "$table" "$key" "$wanted" "$list" 2> "$errors"; then
+            reason=$(cat "$errors")
+            rm -f "$current" "$next" "$errors"
+            warning "$label: ${reason:-config could not be edited}; file preserved."
+            return 1
+        fi
+        rm -f "$current"
+        current="$next"
+    done
+    rm -f "$errors"
+    if [[ -f "$path" ]] && cmp -s "$current" "$path"; then
+        rm -f "$current"
+        log "$label already set ($summary); config preserved."
+    elif deploy_file "$path" "${mode:-644}" < "$current"; then
+        rm -f "$current"
+        success "$label saved ($summary): $path"
+    else
+        rm -f "$current"
+        return 1
+    fi
+}
+
+readonly HERDR_PREFIX_EDIT='keys|prefix|ctrl+space|list'
+# Built-in Herdr themes (0.9.5): catppuccin, terminal, tokyo-night, dracula,
+# nord, gruvbox, one-dark, solarized, kanagawa, rose-pine, vesper.
+readonly HERDR_THEME_EDIT='theme|name|tokyo-night'
+
+configure_herdr_prefix() { configure_herdr_settings 'Herdr prefix' "$HERDR_PREFIX_EDIT"; }
+configure_herdr_theme() { configure_herdr_settings 'Herdr theme' "$HERDR_THEME_EDIT"; }
+# The stage: both settings in one write, so a fresh file gets no backup.
+configure_herdr_config() { configure_herdr_settings 'Herdr config' "$HERDR_PREFIX_EDIT" "$HERDR_THEME_EDIT"; }
 
 # Herdr 0.9.5 provides all four installers, but none of these four
 # session/lifecycle integrations is active merely by installing Herdr itself.
@@ -925,7 +969,7 @@ resolve_font_choice() {
 
 version_inventory() {
     local name version
-    for name in git zsh fzf zoxide rg fd starship yazi ya pnpm node python3 ghostty mosh-server nvim lazygit tree-sitter; do
+    for name in git zsh fzf zoxide rg fd starship yazi ya pnpm node uv python3 ghostty mosh-server nvim lazygit tree-sitter; do
         if [[ "$name" == ghostty ]]; then
             version=$(tool_version "$(ghostty_bin)")
         else
@@ -955,7 +999,7 @@ version_inventory() {
             dpkg-query -W -f='  ${Package}: ${Version}\n' "$package" 2>/dev/null || true
         done
     elif command_exists brew; then
-        brew list --versions git zsh fzf zoxide ripgrep fd starship yazi pnpm python mosh neovim lazygit tree-sitter-cli 2>/dev/null || true
+        brew list --versions git zsh fzf zoxide ripgrep fd starship yazi pnpm uv mosh neovim lazygit tree-sitter-cli 2>/dev/null || true
     fi
 }
 
@@ -1270,7 +1314,7 @@ install_core_tools() {
     if [[ "$OS_TYPE" == "darwin" ]]; then
         # macOS via Homebrew
         # Format: "package_name:command_name" - if no colon, command_name = package_name
-        local tools=("git" "zsh" "fzf" "zoxide" "ripgrep:rg" "fd:fd" "python:python3" "mosh:mosh-server")
+        local tools=("git" "zsh" "fzf" "zoxide" "ripgrep:rg" "fd:fd" "mosh:mosh-server")
         local package_name command_name
         for tool_mapping in "${tools[@]}"; do
             if [[ "$tool_mapping" == *":"* ]]; then
@@ -1381,6 +1425,40 @@ install_starship() {
         install_release_tool starship "$STARSHIP_VERSION" || return 1
     fi
     require_version starship "$STARSHIP_VERSION"
+}
+
+# Python comes from uv on both platforms: uv from Homebrew (macOS) or the pinned
+# release (Linux), then a uv-managed CPython whose `python`, `python3` and
+# `python3.N` links land in ~/.local/bin, first on the deployed PATH. The
+# distribution or Homebrew Python is left alone; a foreign python3 already in
+# ~/.local/bin is reported, never replaced.
+uv_managed_link() {
+    local python_dir
+    python_dir=$(uv python dir 2>/dev/null) || return 1
+    [[ -L "$1" && "$(readlink "$1")" == "$python_dir"/* ]]
+}
+
+install_python() {
+    if [[ "$OS_TYPE" == darwin ]]; then
+        brew_install_or_upgrade uv uv "$UV_VERSION" || return 1
+    else
+        install_release_tool uv "$UV_VERSION" || return 1
+    fi
+    require_version uv "$UV_VERSION" || return 1
+    local shim="$HOME/.local/bin/python3"
+    if uv python find "$PYTHON_VERSION" --managed-python >/dev/null 2>&1 && uv_managed_link "$shim"; then
+        success "Python $(tool_version "$shim") retained (uv-managed)"
+    else
+        if [[ -e "$shim" || -L "$shim" ]] && ! uv_managed_link "$shim"; then
+            warning "$shim is not managed by uv; move it aside so uv can provide python3"
+            return 1
+        fi
+        log "Installing Python $PYTHON_VERSION with uv..."
+        uv python install "$PYTHON_VERSION" --default --preview-features python-install-default || return 1
+        uv_managed_link "$shim" || { warning "uv did not install $shim"; return 1; }
+        note_change "python:$PYTHON_VERSION"
+    fi
+    require_version "$shim" "$PYTHON_VERSION"
 }
 
 install_yazi() {
@@ -2341,6 +2419,47 @@ GHOSTTY_EOF
 # 8. YAZI CONFIGURATION
 ################################################################################
 
+# macOS editors ship their CLI inside the app bundle and only add it to PATH
+# through an in-app command (VS Code: "Shell Command: Install 'code' command
+# in PATH"). Link the bundled CLIs into ~/.local/bin so the shell and the Yazi
+# opener find them; a foreign file of the same name is left alone.
+macos_editor_clis() {
+    printf '%s\n' \
+        'code|Visual Studio Code.app/Contents/Resources/app/bin/code' \
+        'codium|VSCodium.app/Contents/Resources/app/bin/codium' \
+        'cursor|Cursor.app/Contents/Resources/app/bin/cursor' \
+        'zed|Zed.app/Contents/MacOS/cli' \
+        'zed|Zed Preview.app/Contents/MacOS/cli'
+}
+
+link_macos_editor_clis() {
+    local name relative cli link root
+    mkdir -p "$HOME/.local/bin"
+    while IFS='|' read -r name relative; do
+        command_exists "$name" && continue
+        for root in /Applications "$HOME/Applications"; do
+            cli="$root/$relative"
+            [[ -x "$cli" ]] || continue
+            link="$HOME/.local/bin/$name"
+            if [[ -L "$link" && "$(readlink "$link")" == *.app/Contents/* ]]; then
+                # Our link, possibly to a moved or replaced bundle.
+                if [[ "$(readlink "$link")" != "$cli" ]]; then
+                    ln -sfn "$cli" "$link" || continue
+                    note_change "$link"
+                    success "$name linked to $cli"
+                fi
+            elif [[ -e "$link" || -L "$link" ]]; then
+                warning "$link exists and is not a link into an app bundle; left alone"
+            else
+                ln -s "$cli" "$link" || continue
+                note_change "$link"
+                success "$name linked to $cli"
+            fi
+            break
+        done
+    done < <(macos_editor_clis)
+}
+
 deploy_yazi_config() {
     log "Deploying Yazi configuration..."
 
@@ -2361,22 +2480,22 @@ require("git"):setup {
 require("starship"):setup()
 YAZI_INIT_EOF
 
-    local dev_openers=()
-    if command_exists code; then
-        dev_openers+=("    { run = \"code -r %s\", orphan = true, desc = \"VS Code\", for = \"unix\" },")
-    fi
-    if command_exists codium; then
-        dev_openers+=("    { run = \"codium -r %s\", orphan = true, desc = \"VSCodium\", for = \"unix\" },")
-    fi
-    if command_exists cursor; then
-        dev_openers+=("    { run = \"cursor -r %s\", orphan = true, desc = \"Cursor\", for = \"unix\" },")
-    fi
-    if command_exists zed; then
-        dev_openers+=("    { run = \"zed %s\", orphan = true, desc = \"Zed\", for = \"unix\" },")
-    fi
-
-    if [[ ${#dev_openers[@]} -eq 0 ]]; then
-        warning "No GUI editor CLI found for Yazi dev opener (checked: code, codium, cursor, zed)"
+    [[ "$OS_TYPE" != darwin ]] || link_macos_editor_clis
+    # Files open in Neovim; one GUI editor opens projects (directories) and is
+    # the second choice for files: Zed, else VS Code, Cursor or VSCodium.
+    local gui_opener="" name
+    for name in zed code cursor codium; do
+        command_exists "$name" || continue
+        case "$name" in
+            zed) gui_opener='    { run = "zed %s", orphan = true, desc = "Zed", for = "unix" },' ;;
+            code) gui_opener='    { run = "code -r %s", orphan = true, desc = "VS Code", for = "unix" },' ;;
+            cursor) gui_opener='    { run = "cursor -r %s", orphan = true, desc = "Cursor", for = "unix" },' ;;
+            codium) gui_opener='    { run = "codium -r %s", orphan = true, desc = "VSCodium", for = "unix" },' ;;
+        esac
+        break
+    done
+    if [[ -z "$gui_opener" ]]; then
+        warning "No GUI editor CLI found for Yazi (checked: zed, code, cursor, codium); files open in Neovim only"
     fi
 
     {
@@ -2397,15 +2516,14 @@ group = "git"
 [opener]
 edit = [
     { run = '"$HOME/.local/bin/vi" %s', block = true, desc = "Neovim (vi)", for = "unix" },
-]
 YAZI_TOML_EOF
-        if [[ ${#dev_openers[@]} -gt 0 ]]; then
-            printf 'dev_open = [\n'
-            printf '%s\n' "${dev_openers[@]}"
-            printf ']\n'
+        [[ -z "$gui_opener" ]] || printf '%s\n' "$gui_opener"
+        printf ']\n'
+        if [[ -n "$gui_opener" ]]; then
+            printf 'dev_open = [\n%s\n]\n' "$gui_opener"
         fi
         printf '\n[open]\nprepend_rules = [\n'
-        if [[ ${#dev_openers[@]} -gt 0 ]]; then
+        if [[ -n "$gui_opener" ]]; then
             printf '%s\n' '    { url = "*/", use = "dev_open" },'
         fi
         cat << 'YAZI_OPEN_RULES_EOF'
@@ -3902,7 +4020,8 @@ verify_installation() {
     local item name minimum
     for item in "node:$NODE_VERSION" "pnpm:$PNPM_VERSION" "starship:$STARSHIP_VERSION" \
         "fzf:$FZF_VERSION" zoxide:0.10.0 rg:15.2.0 fd:10.5.0 "ya:$MIN_YAZI_VERSION" \
-        "nvim:$NEOVIM_VERSION" "lazygit:$LAZYGIT_VERSION" "tree-sitter:$TREE_SITTER_VERSION"; do
+        "nvim:$NEOVIM_VERSION" "lazygit:$LAZYGIT_VERSION" "tree-sitter:$TREE_SITTER_VERSION" \
+        "uv:$UV_VERSION" "python3:$PYTHON_VERSION"; do
         name="${item%%:*}"; minimum="${item#*:}"
         check_versioned_cmd "$name" "$minimum" "$(tool_version "$name")"
     done
@@ -4091,6 +4210,7 @@ main() {
     run_stage 'Core tools' install_core_tools
     run_stage 'UTF-8 locale' ensure_utf8_locale
     run_stage Starship install_starship
+    run_stage 'Python (uv)' install_python
     run_stage Yazi install_yazi
     run_stage Neovim install_neovim
     run_stage 'Neovim tools' install_neovim_tools

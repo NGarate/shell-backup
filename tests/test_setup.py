@@ -133,10 +133,10 @@ esac
     def test_herdr_prefix_fresh_and_idempotent(self):
         output = self.run_shell('NON_INTERACTIVE=true\nsetup_herdr')
         config = self.home / '.config/herdr/config.toml'
-        self.assertEqual(config.read_text(), '[keys]\nprefix = "ctrl+space"\n')
-        self.assertIn('Herdr prefix: verified', output)
+        self.assertEqual(config.read_text(), '[keys]\nprefix = "ctrl+space"\n\n[theme]\nname = "tokyo-night"\n')
+        self.assertIn('Herdr config: verified', output)
         before = config.stat().st_mtime_ns
-        self.run_shell('configure_herdr_prefix')
+        self.run_shell('configure_herdr_config')
         self.assertEqual(config.stat().st_mtime_ns, before)
         self.assertFalse((self.home / '.backup').exists())
         # Only the four integration installers ran; no server commands.
@@ -214,8 +214,61 @@ command = "echo hello"
             self.assertIn('ctrl+space', self.toml(config.read_text())['keys']['prefix'])
         config.write_text('[keys]\nprefix = [\n  "ctrl+b",\n]\n')
         output = self.run_shell('! configure_herdr_prefix')
-        self.assertIn('multiline prefix list requires a manual prefix edit', output)
+        self.assertIn('multiline prefix list requires a manual edit', output)
         self.assertEqual(config.read_text(), '[keys]\nprefix = [\n  "ctrl+b",\n]\n')
+
+    def test_herdr_theme_set_in_existing_table_and_kept(self):
+        """[theme].name becomes tokyo-night: inserted after a header with comments and subtables, or replaced."""
+        config = self.home / '.config/herdr/config.toml'
+        config.parent.mkdir()
+        original = '[keys]\nprefix = "ctrl+space"\n\n[theme]\n# Built-in themes: catppuccin, tokyo-night\n# name = "catppuccin"\n\n[theme.custom]\nsidebar_bg = "#181825"\n'
+        config.write_text(original)
+        self.run_shell('configure_herdr_theme')
+        self.assertEqual(config.read_text(), original.replace('[theme]\n', '[theme]\nname = "tokyo-night"\n'))
+        self.assertEqual(self.toml(config.read_text())['theme']['name'], 'tokyo-night')
+        self.assertEqual(self.toml(config.read_text())['theme']['custom']['sidebar_bg'], '#181825')
+        config.write_text("[theme]\nname = 'dracula' # mine\n")
+        self.run_shell('configure_herdr_theme')
+        self.assertEqual(config.read_text(), '[theme]\nname = "tokyo-night" # mine\n')
+        # A list is not a valid theme name; the file stays.
+        config.write_text('[theme]\nname = ["dracula"]\n')
+        output = self.run_shell('! configure_herdr_theme')
+        self.assertIn('unsupported name value', output)
+        self.assertEqual(config.read_text(), '[theme]\nname = ["dracula"]\n')
+
+    def test_macos_editor_clis_linked_from_app_bundles(self):
+        """Bundled code/zed CLIs are linked into ~/.local/bin for the shell and the Yazi opener."""
+        for relative in ('Visual Studio Code.app/Contents/Resources/app/bin/code', 'Zed.app/Contents/MacOS/cli'):
+            cli = self.home / 'Applications' / relative
+            cli.parent.mkdir(parents=True)
+            cli.write_text('#!/bin/bash\n')
+            cli.chmod(0o755)
+        self.executable('zed', '#!/bin/bash\necho mine\n')  # a foreign zed stays
+        output = self.run_shell('OS_TYPE=darwin\ndeploy_yazi_config')
+        self.assertEqual((self.bin / 'code').resolve(), self.home / 'Applications/Visual Studio Code.app/Contents/Resources/app/bin/code')
+        self.assertEqual((self.bin / 'zed').read_text(), '#!/bin/bash\necho mine\n')
+        self.assertIn('code linked to', output)
+        self.assertNotIn('No GUI editor CLI found', output)
+        # Zed is preferred over VS Code when both exist.
+        toml = (self.home / '.config/yazi/yazi.toml').read_text()
+        self.assertIn('desc = "Zed"', toml)
+        self.assertNotIn('desc = "VS Code"', toml)
+        # Without any Zed (foreign CLI or bundle), VS Code is the fallback.
+        (self.bin / 'zed').unlink()
+        shutil.rmtree(self.home / 'Applications/Zed.app')
+        self.run_shell('OS_TYPE=darwin\ndeploy_yazi_config')
+        toml = (self.home / '.config/yazi/yazi.toml').read_text()
+        self.assertIn('desc = "VS Code"', toml)
+        self.assertNotIn('desc = "Zed"', toml)
+        self.executable('zed', '#!/bin/bash\necho mine\n')
+        # A rerun links nothing again; a moved bundle is relinked.
+        output = self.run_shell('OS_TYPE=darwin\ndeploy_yazi_config')
+        self.assertNotIn('linked to', output)
+        (self.bin / 'code').unlink()
+        (self.bin / 'code').symlink_to('/Applications/Old.app/Contents/Resources/app/bin/code')
+        output = self.run_shell('OS_TYPE=darwin\ndeploy_yazi_config')
+        self.assertIn('code linked to', output)
+        self.assertEqual((self.bin / 'code').resolve(), self.home / 'Applications/Visual Studio Code.app/Contents/Resources/app/bin/code')
 
     def test_herdr_prefix_ambiguous_config_reports_failure_and_preserves_file(self):
         config = self.home / '.config/herdr/config.toml'
@@ -224,11 +277,13 @@ command = "echo hello"
             'keys = { prefix = "ctrl+b" }\n',
             '[keys]\nprefix = "ctrl+b"\nprefix = "ctrl+a"\n',
             'message = """\n[keys]\nprefix = "ctrl+b"\n"""\n',
+            # The theme edit fails too, and the prefix edit is not kept alone.
+            '[theme]\nname = ["dracula"]\n',
         ]:
             config.write_text(original)
             output = self.run_shell('NON_INTERACTIVE=true\nsetup_herdr\n[[ "$SETUP_FAILED" == true ]]')
             self.assertEqual(config.read_text(), original)
-            self.assertIn('Herdr prefix: failed', output)
+            self.assertIn('Herdr config: failed', output)
             self.assertIn('Herdr/opencode: installed', output)
         self.assertFalse((self.home / '.backup').exists())
 
@@ -337,7 +392,7 @@ retry() { cp "$HOME/fonts.zip" "${@: -1}"; }
 NON_INTERACTIVE=true
 resolve_font_choice
 install_fonts
-configure_herdr_prefix
+configure_herdr_config
 deploy_attach_helper
 deploy_zshenv
 deploy_zshrc
@@ -858,6 +913,46 @@ print_summary
         self.assertIn('finished with failures', output)
         self.assertNotIn('SETUP COMPLETE', output)
 
+    def test_python_from_uv_installs_once_and_keeps_foreign_python3(self):
+        """uv provides python3 in ~/.local/bin; a rerun changes nothing and a foreign python3 is reported."""
+        managed = self.home / '.local/share/uv/python/cpython-3.14/bin/python3.14'
+        uv = r"""#!/bin/bash
+case "$*" in
+  --version) echo "uv 0.13.4" ;;
+  "python dir") echo "$HOME/.local/share/uv/python" ;;
+  "python find 3.14 --managed-python") [[ -x "$HOME/.local/share/uv/python/cpython-3.14/bin/python3.14" ]] && echo "$HOME/.local/share/uv/python/cpython-3.14/bin/python3.14" ;;
+  "python install 3.14 --default --preview-features python-install-default")
+    echo install >> "$CALLS"
+    mkdir -p "$HOME/.local/share/uv/python/cpython-3.14/bin"
+    printf '#!/bin/bash\necho "Python 3.14.8"\n' > "$HOME/.local/share/uv/python/cpython-3.14/bin/python3.14"
+    chmod +x "$HOME/.local/share/uv/python/cpython-3.14/bin/python3.14"
+    # Like uv: never replace an executable it does not manage.
+    [[ -e "$HOME/.local/bin/python3" ]] || ln -s "$HOME/.local/share/uv/python/cpython-3.14/bin/python3.14" "$HOME/.local/bin/python3" ;;
+  *) exit 99 ;;
+esac
+"""
+        self.executable('uv', uv)
+        self.executable('uvx', '#!/bin/bash\necho "uvx 0.13.4"\n')
+        output = self.run_shell('install_python')
+        self.assertIn('uv retained (0.13.4)', output)
+        self.assertIn('Installing Python 3.14 with uv', output)
+        self.assertIn('/.local/bin/python3 verified (3.14.8, target 3.14)', output)
+        self.assertEqual(self.calls(), ['install'])
+        self.assertEqual((self.bin / 'python3').resolve(), managed)
+        output = self.run_shell('install_python')
+        self.assertIn('Python 3.14.8 retained (uv-managed)', output)
+        self.assertEqual(self.calls(), ['install'])
+        # Missing links are recreated by uv; a foreign python3 blocks the stage and stays.
+        (self.bin / 'python3').unlink()
+        self.run_shell('install_python')
+        self.assertEqual(self.calls(), ['install', 'install'])
+        (self.bin / 'python3').unlink()
+        self.executable('python3', '#!/bin/bash\necho "Python 3.12.0"\n')
+        output = self.run_shell('! install_python')
+        self.assertIn('not managed by uv', output)
+        self.assertEqual(self.calls(), ['install', 'install'])
+        self.assertEqual((self.bin / 'python3').read_text(), '#!/bin/bash\necho "Python 3.12.0"\n')
+
     def test_deploy_file_records_created_and_changed_files(self):
         changes = self.home / 'changes'
         changes.touch()
@@ -1082,7 +1177,7 @@ done
 
     def test_release_manifest_coverage(self):
         self.run_shell(r'''for ARCH in amd64 arm64; do
- for tool in yazi starship pnpm fzf rg fd zoxide herdr nvim lazygit tree-sitter; do
+ for tool in yazi starship pnpm fzf rg fd zoxide herdr nvim lazygit tree-sitter uv; do
   asset=$(release_asset "$tool" linux "$ARCH")
   [[ "$asset" =~ ^https://github.com/.+\|[0-9a-f]{64}$ ]]
  done
@@ -1180,12 +1275,16 @@ release_asset starship darwin arm64 | grep -q apple-darwin
         self.assertEqual(edit, [{'run': '"$HOME/.local/bin/vi" %s', 'block': True, 'desc': 'Neovim (vi)', 'for': 'unix'}])
         self.assertEqual([rule['use'] for rule in config['open']['prepend_rules']], [['edit', 'reveal']])
         self.assertNotIn('dev_open', config['opener'])
-        # A GUI editor adds the directory opener in front of the code rule.
+        # A GUI editor opens directories and becomes the second choice for files;
+        # Zed wins over VS Code.
+        self.executable('code', '#!/bin/bash\nexit 0\n')
         self.executable('zed', '#!/bin/bash\nexit 0\n')
         self.run_shell('deploy_yazi_config')
         config = tomllib.loads((self.home / '.config/yazi/yazi.toml').read_text())
         self.assertEqual(config['open']['prepend_rules'][0], {'url': '*/', 'use': 'dev_open'})
-        self.assertEqual(config['opener']['edit'], edit)
+        zed = {'run': 'zed %s', 'orphan': True, 'desc': 'Zed', 'for': 'unix'}
+        self.assertEqual(config['opener']['edit'], edit + [zed])
+        self.assertEqual(config['opener']['dev_open'], [zed])
 
     def git_get(self, key):
         return self.run_shell(f'git config --global --get {key}').strip()
