@@ -37,6 +37,9 @@ readonly FZF_VERSION="0.74.5"
 # Non-interactive flag (will be parsed after functions are defined)
 NON_INTERACTIVE=false
 WITH_CMUX=false
+LOG_READY=false
+# Accepted options that no longer do anything, reported once the log exists.
+IGNORED_ARGS=()
 FONT_CHOICE=""
 FONT_WEIGHT=""
 HERDR_BIN=""
@@ -65,21 +68,32 @@ _ts() {
     date '+%H:%M:%S'
 }
 
+# Until initialize_log has rotated the previous log, messages (argument
+# errors, for example) reach only the terminal: appending them earlier would
+# put this run's lines into the file that becomes the .prev log.
+emit() {
+    if [[ "$LOG_READY" == true ]]; then
+        echo -e "$1" | tee -a "$SETUP_LOG"
+    else
+        echo -e "$1"
+    fi
+}
+
 log() {
-    echo -e "${BLUE}[$(_ts)][INFO]${NC} $1" | tee -a "$SETUP_LOG"
+    emit "${BLUE}[$(_ts)][INFO]${NC} $1"
 }
 
 success() {
-    echo -e "${GREEN}[$(_ts)]✓${NC} $1" | tee -a "$SETUP_LOG"
+    emit "${GREEN}[$(_ts)]✓${NC} $1"
 }
 
 error() {
-    echo -e "${RED}[$(_ts)]✗${NC} $1" | tee -a "$SETUP_LOG" >&2
+    emit "${RED}[$(_ts)]✗${NC} $1" >&2
     exit 1
 }
 
 warning() {
-    echo -e "${YELLOW}[$(_ts)]⚠${NC} $1" | tee -a "$SETUP_LOG"
+    emit "${YELLOW}[$(_ts)]⚠${NC} $1"
 }
 
 parse_args() {
@@ -89,7 +103,7 @@ parse_args() {
             --ci|--non-interactive) NON_INTERACTIVE=true ;;
             --with-cmux) WITH_CMUX=true ;;
             # Herdr is installed on both platforms now; old invocations keep working.
-            --with-herdr) warning '--with-herdr is no longer needed and is ignored (Herdr is installed by default)' ;;
+            --with-herdr) IGNORED_ARGS+=("$arg") ;;
             --font=commit-mono|--font=jetbrains) FONT_CHOICE="${arg#--font=}" ;;
             --font=*) error "Unknown font: ${arg#--font=} (use commit-mono or jetbrains)" ;;
             --font-weight=300|--font-weight=350|--font-weight=400) FONT_WEIGHT="${arg#--font-weight=}" ;;
@@ -1220,7 +1234,12 @@ initialize_log() {
 SHELL-BACKUP: Installation Log
 ================================================================================
 EOF
+    LOG_READY=true
     log "Starting setup on $(date)"
+    local arg
+    for arg in "${IGNORED_ARGS[@]}"; do
+        warning "$arg is no longer needed and is ignored (Herdr is installed by default)"
+    done
 }
 
 ################################################################################

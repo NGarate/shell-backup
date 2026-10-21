@@ -907,9 +907,16 @@ retry() {{ cp "$HOME/archive.tar.gz" "${{@: -1}}"; }}
         self.assertIn('ghostty installed (1.3.1)', self.run_shell('GHOSTTY_SNAP_BIN=/missing\nverify_installation || true'))
 
     def test_deprecated_with_herdr_flag_is_ignored(self):
-        output = self.run_shell('parse_args --with-herdr --ci\n[[ "$NON_INTERACTIVE" == true ]]')
+        (self.home / '.setup.log').write_text('previous run\n')
+        output = self.run_shell('parse_args --with-herdr --ci\n[[ "$NON_INTERACTIVE" == true ]]\ninitialize_log')
         self.assertIn('--with-herdr is no longer needed', output)
+        # Reported after the rotation, so the warning is in this run's log.
+        self.assertIn('--with-herdr is no longer needed', (self.home / '.setup.log').read_text())
+        self.assertEqual((self.home / '.setup.log.prev').read_text(), 'previous run\n')
         self.assertIn('Unknown option: --with-x', self.run_shell('(parse_args --with-x) 2>&1 || true'))
+        # Argument errors precede the rotation and never touch the previous log.
+        self.assertEqual((self.home / '.setup.log.prev').read_text(), 'previous run\n')
+        self.assertNotIn('--with-x', (self.home / '.setup.log').read_text())
 
     def test_macos_old_os_blocks_native_terminal(self):
         output = self.run_shell("""OS_TYPE=darwin
