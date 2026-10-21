@@ -33,7 +33,7 @@ class SetupTests(unittest.TestCase):
         (self.home / 'status').write_text('\n'.join(f'{n}: not installed (/mock/{n})' for n in ('opencode', 'hermes', 'codex', 'claude')) + '\n')
         self.executable('herdr', r'''#!/bin/bash
 case "$1 $2" in
-  '--version ') echo "herdr ${MOCK_VERSION:-0.8.2}"; exit "${VERSION_FAIL:-0}" ;;
+  '--version ') echo "herdr ${MOCK_VERSION:-0.9.5}"; exit "${VERSION_FAIL:-0}" ;;
   '--help ') exit 0 ;;
   'integration status') cat "$FIXTURE"; exit "${STATUS_FAIL:-0}" ;;
   'integration install')
@@ -194,6 +194,26 @@ command = "echo hello"
         except ImportError:
             return {'keys': {'prefix': 'ctrl+space'}}
         return tomllib.loads(text)
+
+    def test_herdr_prefix_list_keeps_other_prefixes(self):
+        """Herdr 0.9.2+ accepts several prefixes; ctrl+space is added to a list that lacks it."""
+        config = self.home / '.config/herdr/config.toml'
+        config.parent.mkdir()
+        cases = [
+            ('[keys]\nprefix = ["ctrl+b", \'ctrl+s\'] # mine\n', '[keys]\nprefix = ["ctrl+space", "ctrl+b", \'ctrl+s\'] # mine\n'),
+            ('[keys]\nprefix = [ ]\n', '[keys]\nprefix = ["ctrl+space"]\n'),
+            ('[keys]\nprefix = ["ctrl+s", "ctrl+space"]\n', None),
+            ("[keys]\nprefix = ['ctrl+space']\n", None),
+        ]
+        for original, expected in cases:
+            config.write_text(original)
+            self.run_shell('configure_herdr_prefix')
+            self.assertEqual(config.read_text(), expected or original)
+            self.assertIn('ctrl+space', self.toml(config.read_text())['keys']['prefix'])
+        config.write_text('[keys]\nprefix = [\n  "ctrl+b",\n]\n')
+        output = self.run_shell('! configure_herdr_prefix')
+        self.assertIn('multiline prefix list requires a manual prefix edit', output)
+        self.assertEqual(config.read_text(), '[keys]\nprefix = [\n  "ctrl+b",\n]\n')
 
     def test_herdr_prefix_ambiguous_config_reports_failure_and_preserves_file(self):
         config = self.home / '.config/herdr/config.toml'
@@ -693,7 +713,7 @@ brew() {
         fixture = self.home / 'payload'
         fixture.mkdir()
         binary = fixture / 'starship'
-        binary.write_text('#!/bin/bash\necho "starship 1.26.0"\n')
+        binary.write_text('#!/bin/bash\necho "starship 1.27.0"\n')
         binary.chmod(0o755)
         archive = self.home / 'archive.tar.gz'
         with tarfile.open(archive, 'w:gz') as tar:
@@ -705,13 +725,13 @@ release_asset() {{ echo 'https://example.invalid/starship.tar.gz|{digest}'; }}
 retry() {{ cp "$HOME/archive.tar.gz" "${{@: -1}}"; }}
 """
         self.executable('starship', '#!/bin/bash\necho "starship 1.23.0"\n')
-        output = self.run_shell(darwin + 'install_starship\n[[ "$(tool_version starship)" == 1.26.0 ]]\n')
-        self.assertIn('starship 1.23.0 -> 1.26.0 (target 1.26.0)', output)
+        output = self.run_shell(darwin + 'install_starship\n[[ "$(tool_version starship)" == 1.27.0 ]]\n')
+        self.assertIn('starship 1.23.0 -> 1.27.0 (target 1.27.0)', output)
         self.assertEqual(self.calls(), ['brew list starship'])
 
         # A rerun keeps the updated binary without downloading again.
         output = self.run_shell(darwin + 'retry() { exit 98; }\ninstall_starship\n')
-        self.assertIn('starship retained (1.26.0)', output)
+        self.assertIn('starship retained (1.27.0)', output)
 
         # Homebrew's own Starship stays Homebrew's.
         (self.home / 'calls').unlink()

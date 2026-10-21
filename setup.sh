@@ -32,8 +32,9 @@ readonly MIN_ZSH_VERSION="5.9"
 readonly MIN_YAZI_VERSION="26.9.1"
 
 # Tool versions
-readonly NVM_INSTALL_VERSION="0.40.7"
+readonly NVM_INSTALL_VERSION="0.40.8"
 readonly YAZI_VERSION="26.9.1"
+readonly FZF_VERSION="0.74.5"
 
 # Non-interactive flag (will be parsed after functions are defined)
 NON_INTERACTIVE=false
@@ -43,12 +44,12 @@ HERDR_BIN=""
 HERDR_READY=false
 SETUP_FAILED=false
 RESULTS=()
-readonly HERDR_VERSION="0.8.2"
-readonly STARSHIP_VERSION="1.26.0"
-readonly PNPM_VERSION="12.3.4"
-readonly NODE_VERSION="24.20.0"
+readonly HERDR_VERSION="0.9.5"
+readonly STARSHIP_VERSION="1.27.0"
+readonly PNPM_VERSION="12.14.0"
+readonly NODE_VERSION="24.22.0"
 readonly GHOSTTY_VERSION="1.3.1"
-readonly CMUX_VERSION="0.64.22"
+readonly CMUX_VERSION="0.65.2"
 readonly NEOVIM_VERSION="0.12.6"
 readonly LAZYGIT_VERSION="0.66.2"
 readonly TREE_SITTER_VERSION="0.27.1"
@@ -253,28 +254,28 @@ verified_download() {
 }
 
 # All records below come from the official release asset digests, audited
-# 2026-09-07. musl archives avoid distro glibc requirements for Rust CLIs.
+# 2026-10-21. musl archives avoid distro glibc requirements for Rust CLIs.
 release_asset() {
     local name="$1" platform="$2" arch="$3"
     case "$name:$platform:$arch" in
-        herdr:linux:amd64) printf '%s\n' 'https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-x86_64|976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4' ;;
-        herdr:linux:arm64) printf '%s\n' 'https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-aarch64|f55610658e1c2e0d2aaef730b4b2ab885f7f8ba00285ab372bfb14f2e3d5b40d' ;;
-        herdr:darwin:arm64) printf '%s\n' 'https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-macos-aarch64|a5d4f4d504d8b309c91f811050559300faba31258425f53c50852fc96f6ae574' ;;
+        herdr:linux:amd64) printf '%s\n' 'https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-x86_64|14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d' ;;
+        herdr:linux:arm64) printf '%s\n' 'https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-aarch64|17d7536f2da50859523680ef279dffcac8e4a235f4e46fe8da6c2ec44141897c' ;;
+        herdr:darwin:arm64) printf '%s\n' 'https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-macos-aarch64|fb77c2232a05a8035421382c894392f4174e4e38a18e48af3dd0290157c3a7e2' ;;
         yazi:linux:amd64) printf '%s\n' 'https://github.com/sxyazi/yazi/releases/download/v26.9.1/yazi-x86_64-unknown-linux-musl.zip|9b9c39decccf8cb0ff53a7d637d38f8a79d93bbd0099f4ea9c619ef6bb392f5d' ;;
         yazi:linux:arm64) printf '%s\n' 'https://github.com/sxyazi/yazi/releases/download/v26.9.1/yazi-aarch64-unknown-linux-musl.zip|dd569daecaae914185f295634109295ccd25c1b42b02eb89a74f651970024f2e' ;;
-        starship:linux:amd64) printf '%s\n' 'https://github.com/starship/starship/releases/download/v1.26.0/starship-x86_64-unknown-linux-musl.tar.gz|b7c232b0e8249d8e55a40beb79c5c43a7d370f3f9408bd215deb0170daeaadf3' ;;
-        starship:linux:arm64) printf '%s\n' 'https://github.com/starship/starship/releases/download/v1.26.0/starship-aarch64-unknown-linux-musl.tar.gz|dc30189378d2f2e287384e8a692d3f95ad1df64cf0e8c36aa9201516028aed6b' ;;
-        starship:darwin:arm64) printf '%s\n' 'https://github.com/starship/starship/releases/download/v1.26.0/starship-aarch64-apple-darwin.tar.gz|c40b27b11f580411e068f2fa6c1be7830a387c0bc47a94d1d37f32b054c5361d' ;;
-        fzf:linux:amd64) printf '%s\n' 'https://github.com/junegunn/fzf/releases/download/v0.74.3/fzf-0.74.3-linux_amd64.tar.gz|3501a595e4b5c40a6b047340a0e8f805c46fd4e61ef95ef8a136ba8c61cf6f22' ;;
-        fzf:linux:arm64) printf '%s\n' 'https://github.com/junegunn/fzf/releases/download/v0.74.3/fzf-0.74.3-linux_arm64.tar.gz|4a17a17b46bd0c4873e995533de508995c11572c0be0664a5dbcf13f60463046' ;;
+        starship:linux:amd64) printf '%s\n' 'https://github.com/starship/starship/releases/download/v1.27.0/starship-x86_64-unknown-linux-musl.tar.gz|10c8eb4cb3b761d9bf59ea828444c2dab36c900b7d69a69e08814b286969df89' ;;
+        starship:linux:arm64) printf '%s\n' 'https://github.com/starship/starship/releases/download/v1.27.0/starship-aarch64-unknown-linux-musl.tar.gz|341f5cbf24699fa0b27ec88965ad25f862ea09e15d35a543fd6ffdff1d2aa00d' ;;
+        starship:darwin:arm64) printf '%s\n' 'https://github.com/starship/starship/releases/download/v1.27.0/starship-aarch64-apple-darwin.tar.gz|5362da8cb2928f98f3ce0ffda697cf0f8de70081db000dae316d6d3a404f6cf0' ;;
+        fzf:linux:amd64) printf '%s\n' 'https://github.com/junegunn/fzf/releases/download/v0.74.5/fzf-0.74.5-linux_amd64.tar.gz|d47d7f882972c7d674dbbba998ffa4116e68379616ffac7695d0671e9a722c5f' ;;
+        fzf:linux:arm64) printf '%s\n' 'https://github.com/junegunn/fzf/releases/download/v0.74.5/fzf-0.74.5-linux_arm64.tar.gz|cf058001da21724a469b714a29cf4aab9cbe860d218a0d6c1b5b661efad7784c' ;;
         fd:linux:amd64) printf '%s\n' 'https://github.com/sharkdp/fd/releases/download/v10.5.0/fd-v10.5.0-x86_64-unknown-linux-musl.tar.gz|761c72dc8e120d85b22292063be8a796e2eeb20eb3e4f38b8fa2343ccf3514a7' ;;
         fd:linux:arm64) printf '%s\n' 'https://github.com/sharkdp/fd/releases/download/v10.5.0/fd-v10.5.0-aarch64-unknown-linux-musl.tar.gz|d76c4317f7d5dba69f8a2a15856c90c777e7f0dd4e85f0de8c76de6992c374d4' ;;
         zoxide:linux:amd64) printf '%s\n' 'https://github.com/ajeetdsouza/zoxide/releases/download/v0.10.0/zoxide-0.10.0-x86_64-unknown-linux-musl.tar.gz|2d93385b99f3e82cf2701609a1bffcad863fbeb75aa3fe7eb6be4d29be68b1ae' ;;
         zoxide:linux:arm64) printf '%s\n' 'https://github.com/ajeetdsouza/zoxide/releases/download/v0.10.0/zoxide-0.10.0-aarch64-unknown-linux-musl.tar.gz|f1f16c5d6298d63dee467eedea1cdcd8490e43e493bea43acd416dc9033ef641' ;;
         rg:linux:amd64) printf '%s\n' 'https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz|33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c' ;;
         rg:linux:arm64) printf '%s\n' 'https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz|800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915' ;;
-        pnpm:linux:amd64) printf '%s\n' 'https://github.com/pnpm/pnpm/releases/download/v12.3.4/pnpm-linux-x64-musl.tar.gz|e4c4f54599627cc0646fbb2ea8103bd6c88634533fbd6c6f5ca0f6fe7d6f5d9c' ;;
-        pnpm:linux:arm64) printf '%s\n' 'https://github.com/pnpm/pnpm/releases/download/v12.3.4/pnpm-linux-arm64-musl.tar.gz|75c0b268cedbf9b57b69dcef576b9b307dd5b7650c1f967ac1b8f8d6afc1ca25' ;;
+        pnpm:linux:amd64) printf '%s\n' 'https://github.com/pnpm/pnpm/releases/download/v12.14.0/pnpm-linux-x64-musl.tar.gz|d7115e2f2791d79bf9e7e448609537595bb7787de1ef5292ce91ff3d1be2629e' ;;
+        pnpm:linux:arm64) printf '%s\n' 'https://github.com/pnpm/pnpm/releases/download/v12.14.0/pnpm-linux-arm64-musl.tar.gz|511a54809bdfd28270d30011d1697f582c8130d555b4fa0e2856b1a7534c98bf' ;;
         # Neovim tools, audited 2026-10-16. nvim is a relocatable tree (bin, lib, share).
         nvim:linux:amd64) printf '%s\n' 'https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-x86_64.tar.gz|474430d53e6264f6d6dd18db42d6dc9df3a1b56ca9e88a325bbf860e1a811d87' ;;
         nvim:linux:arm64) printf '%s\n' 'https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-arm64.tar.gz|8f1f64a0bdb97247034038c3823c6cbad5bdf9ecd5751b85494b71c3ee04c815' ;;
@@ -586,11 +587,19 @@ END {
             rest = substr(line, RLENGTH + 1)
             if (rest ~ /^"/) { if (!match(rest, /^"([^"\\]|\\.)*"/)) fail("unsupported prefix value") }
             else if (rest ~ /^'/) { if (!match(rest, /^'[^']*'/)) fail("unsupported prefix value") }
+            else if (rest ~ /^\[/) { if (!match(rest, /^\[[^\]]*\]/)) fail("multiline prefix list requires a manual prefix edit") }
             else fail("unsupported prefix value")
             value = substr(rest, 1, RLENGTH)
             tail = substr(rest, RLENGTH + 1)
             if (tail !~ /^[ \t]*(#.*)?$/) fail("unsupported prefix value")
-            if (value != "\"ctrl+space\"" && value != "'ctrl+space'") L[found] = head "\"ctrl+space\"" tail
+            if (value ~ /^\[/) {
+                # Herdr 0.9.2+: several prefixes. Keep the user's, with ctrl+space among them.
+                if (value !~ /["']ctrl\+space["']/) {
+                    inner = substr(value, 2, length(value) - 2)
+                    sub(/^[ \t]+/, "", inner); sub(/[ \t]+$/, "", inner)
+                    L[found] = head "[\"ctrl+space\"" (inner == "" ? "" : ", " inner) "]" tail
+                }
+            } else if (value != "\"ctrl+space\"" && value != "'ctrl+space'") L[found] = head "\"ctrl+space\"" tail
             for (i = 1; i <= n; i++) { O[++out] = L[i]; ORIG[out] = i }
         } else {
             for (i = 1; i <= header; i++) { O[++out] = L[i]; ORIG[out] = i }
@@ -634,9 +643,9 @@ HERDR_PREFIX_AWK
     log 'Herdr prefix: Ctrl+Space. Reload config in Herdr or reattach the client to apply.'
 }
 
-# Herdr 0.8.2 provides all four installers, but none of these four
+# Herdr 0.9.5 provides all four installers, but none of these four
 # session/lifecycle integrations is active merely by installing Herdr itself.
-# Official protocol: src/cli/integration.rs at v0.8.2 (no server required).
+# Official protocol: src/cli/integration.rs at v0.9.5 (no server required).
 integration_state() {
     local target="$1" snapshot="$2" line count
     count=$(printf '%s\n' "$snapshot" | awk -v p="$target: " 'index($0,p)==1 {n++} END {print n+0}')
@@ -1263,7 +1272,7 @@ install_core_tools() {
     fi
 
     if [[ "$OS_TYPE" == linux ]]; then
-        install_release_tool fzf 0.74.3 || return 1
+        install_release_tool fzf "$FZF_VERSION" || return 1
         install_release_tool zoxide 0.10.0 || return 1
         install_release_tool rg 15.2.0 || return 1
         install_release_tool fd 10.5.0 || return 1
@@ -3512,7 +3521,7 @@ setup_nvm() {
             temp_dir=$(mktemp -d)
             trap 'rm -rf "$temp_dir"' EXIT
             verified_download "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_INSTALL_VERSION}/install.sh" \
-                "066ce4eaf4d78eaa6410433bc9ba58faaba646157cbbed6109153e6c24c5f8a5" "$temp_dir/install.sh" || exit 1
+                "48a0eee9a60e07422dce0eb5774754c83889570ca1ee2566c516acbe8af03a9e" "$temp_dir/install.sh" || exit 1
             PROFILE=/dev/null bash "$temp_dir/install.sh" || exit 1
         ) || return 1
     fi
@@ -3767,7 +3776,7 @@ verify_installation() {
 
     local item name minimum
     for item in "node:$NODE_VERSION" "pnpm:$PNPM_VERSION" "starship:$STARSHIP_VERSION" \
-        fzf:0.74.3 zoxide:0.10.0 rg:15.2.0 fd:10.5.0 "ya:$MIN_YAZI_VERSION" \
+        "fzf:$FZF_VERSION" zoxide:0.10.0 rg:15.2.0 fd:10.5.0 "ya:$MIN_YAZI_VERSION" \
         "nvim:$NEOVIM_VERSION" "lazygit:$LAZYGIT_VERSION" "tree-sitter:$TREE_SITTER_VERSION"; do
         name="${item%%:*}"; minimum="${item#*:}"
         check_versioned_cmd "$name" "$minimum" "$(tool_version "$name")"
