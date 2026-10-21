@@ -3843,8 +3843,9 @@ setup_zinit_plugins() {
     local revisions_before
     revisions_before=$(zinit_revisions)
     # Run zsh to download and install all plugins
+    local bootstrap=0
     log "Installing plugins (this may take a minute)..."
-    if ! SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE=1 zsh -c '
+    SHELL_BACKUP_SKIP_ZINIT_AUTO_UPDATE=1 zsh -c '
         source "$HOME/.local/share/zinit/zinit.git/zinit.zsh"
         mkdir -p "${ZSH_CACHE_DIR:-$HOME/.cache/zsh}/completions"
 
@@ -3861,7 +3862,9 @@ setup_zinit_plugins() {
             fi
             zinit light "$plugin" >/dev/null
         done
-        shell_backup_update_zinit || exit 1
+        # Every clone exists here: a failed update (offline, or a remote that
+        # refused) is reported apart from a failed bootstrap.
+        shell_backup_update_zinit || exit 4
 
         # Earlier versions loaded OMZ plugins as URL snippets. Remove them once
         # the Git clone exists, so `zinit update --all` never downloads them.
@@ -3869,12 +3872,18 @@ setup_zinit_plugins() {
             command rm -rf -- "${ZINIT[SNIPPETS_DIR]}"/OMZP::{git,bun,alias-finder,command-not-found}
         fi
         exit 0
-    '; then
-        error "Zinit plugin bootstrap failed"
-    fi
+    ' || bootstrap=$?
 
     if ! verify_zinit_assets; then
         error "Zinit plugin bootstrap incomplete"
+    fi
+    # Installed plugins keep working without upstream; the stage is skipped,
+    # not failed, so a rerun without network converges like one with it.
+    if [[ "$bootstrap" == 4 ]]; then
+        warning 'Zinit plugins could not be updated (offline?); the installed plugins are kept'
+        return 3
+    elif [[ "$bootstrap" != 0 ]]; then
+        error "Zinit plugin bootstrap failed"
     fi
 
     [[ "$(zinit_revisions)" == "$revisions_before" ]] || note_change zinit-plugins
@@ -3936,7 +3945,15 @@ setup_yazi_plugins() {
     for plugin_url in \
         https://raw.githubusercontent.com/yazi-rs/plugins/main/git.yazi/main.lua \
         https://raw.githubusercontent.com/Rolv-Apneseth/starship.yazi/main/main.lua; do
-        metadata=$(https_curl -fsSL --connect-timeout 15 --max-time 30 "$plugin_url") || return 1
+        if ! metadata=$(https_curl -fsSL --connect-timeout 15 --max-time 30 "$plugin_url"); then
+            # Installed plugins keep working without upstream (skipped); a
+            # missing one cannot be installed now (failed).
+            if verify_yazi_assets; then
+                warning "Yazi plugins: $plugin_url is unreachable (offline?); the installed plugins are kept"
+                return 3
+            fi
+            return 1
+        fi
         required=$(printf '%s\n' "$metadata" | sed -nE 's/^--- @since ([0-9.]+).*/\1/p' | head -1)
         [[ -z "$required" ]] || require_version yazi "$required" || return 1
     done

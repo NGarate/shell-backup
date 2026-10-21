@@ -1329,6 +1329,39 @@ release_asset starship darwin arm64 | grep -q apple-darwin
                                 capture_output=True, input='', timeout=10)
         self.assertIn('vi: nvim not found', result.stderr)
 
+    def test_yazi_plugins_skipped_when_upstream_is_unreachable(self):
+        for tool in ('yazi', 'ya'):
+            self.executable(tool, '#!/bin/bash\necho "Yazi 26.9.1"\n')
+        self.executable('starship', '#!/bin/bash\necho "starship 1.27.0"\n')
+        self.executable('curl', '#!/bin/bash\nexit 6\n')
+        plugins = self.home / '.config/yazi/plugins'
+        for name in ('git.yazi', 'starship.yazi'):
+            (plugins / name).mkdir(parents=True)
+            (plugins / name / 'main.lua').write_text('-- fixture\n')
+        output = self.run_shell('status=0; setup_yazi_plugins || status=$?; [[ "$status" == 3 ]]')
+        self.assertIn('unreachable', output)
+        # A missing plugin cannot be installed offline: that is a failure.
+        (plugins / 'git.yazi/main.lua').unlink()
+        self.run_shell('status=0; setup_yazi_plugins || status=$?; [[ "$status" == 1 ]]')
+
+    @unittest.skipUnless(shutil.which('zsh'), 'zsh is required to read the plugin list')
+    def test_zinit_plugins_skipped_when_update_fails_with_every_plugin_present(self):
+        self.run_shell('deploy_zinit_updater')
+        zinit = self.home / '.local/share/zinit/zinit.git'
+        zinit.mkdir(parents=True)
+        (zinit / 'zinit.zsh').write_text('')
+        (zinit / 'VERSION').write_text('3.17.1\n')
+        # The bootstrap (zsh -c) fails at its update step; every other zsh call is real.
+        self.executable('zsh', f'#!/bin/bash\n[[ "$1" != -c ]] || exit 4\nexec {shlex.quote(shutil.which("zsh"))} "$@"\n')
+        plugin_dirs = [Path(line.split('|')[1]) for line in self.run_shell('zinit_expected_assets').splitlines()]
+        for directory in plugin_dirs:
+            directory.mkdir(parents=True)
+        output = self.run_shell('status=0; setup_zinit_plugins || status=$?; [[ "$status" == 3 ]]')
+        self.assertIn('could not be updated', output)
+        # A plugin still missing after the bootstrap is a failure, not a skip.
+        shutil.rmtree(plugin_dirs[0])
+        self.run_shell('status=0; (setup_zinit_plugins) || status=$?; [[ "$status" == 1 ]]')
+
     def test_yazi_edit_opener_uses_vi_launcher(self):
         import tomllib
         self.run_shell('deploy_yazi_config')

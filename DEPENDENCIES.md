@@ -22,6 +22,7 @@ Upstream state is an input: package-manager candidates, plugin default branches 
 - Files changed by external tools (Yazi's `package.toml`, files edited by the official Herdr installers) are copied before the tool runs; the copy is kept as a backup only if the tool changed the file.
 - The Zinit bootstrap clones only missing plugins. The updater fetches each plugin and runs `zinit update` only when the checkout is behind its upstream, because `zinit update` rewrites Zinit metadata even when nothing changed.
 - `ya pkg upgrade` runs only for managed packages whose recorded `rev` is not upstream's `HEAD` (`git ls-remote`), whose files are missing, or whose upstream is unknown (offline). It rewrites every file even when nothing changed. User pins (`rev = "=..."`) are left alone.
+- When upstream cannot be reached (Zinit update failed after every clone exists, or the Yazi plugin metadata fetch failed) and the installed plugins verify, the plugin stage is reported as skipped and the installed plugins are kept; a plugin that is missing cannot be installed offline and fails the stage.
 - The font cache is rebuilt only after a font or the fontconfig file changed, or when fontconfig does not list the chosen font.
 - The default-shell stage reads the account's login shell (`getent passwd` / `dscl`), not `$SHELL`, so a rerun before logging in again neither asks for a password nor reports a different result.
 
