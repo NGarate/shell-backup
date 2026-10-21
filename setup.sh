@@ -1917,15 +1917,22 @@ shell_backup_utf8_locale
 unfunction shell_backup_utf8_locale
 
 load_env_files() {
-    local line
+    local line name value
 
-    # Load only ~/.env so startup stays predictable and lightweight.
+    # Load only ~/.env so startup stays predictable and lightweight. A value
+    # wrapped in matching double or single quotes, as dotenv files write it,
+    # loses the quotes; nothing inside a value is expanded.
     if [[ -f "$HOME/.env" ]]; then
         while IFS= read -r line || [[ -n "$line" ]]; do
             [[ "$line" =~ ^[[:space:]]*# ]] && continue
             [[ -z "$line" ]] && continue
             [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*= ]] || continue
-            export "$line" 2>/dev/null || true
+            name="${line%%=*}"
+            value="${line#*=}"
+            case "$value" in
+                \"*\"|\'*\') value="${value[2,-2]}" ;;
+            esac
+            export "$name=$value" 2>/dev/null || true
         done < "$HOME/.env"
     fi
 }

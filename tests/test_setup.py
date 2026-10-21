@@ -1246,6 +1246,23 @@ done
         # Scripts outside SSH keep an explicit LC_ALL=C.
         self.assertEqual(locale_in(LC_ALL='C'), 'C|unset')
 
+    @unittest.skipUnless(shutil.which('zsh'), 'zsh is required to load ~/.env')
+    def test_zshenv_loads_env_values_without_their_quotes(self):
+        self.run_shell('deploy_zshenv')
+        (self.home / '.env').write_text('''# comment
+A="x y"
+B='z $HOME'
+C=plain
+D="unbalanced
+E=""
+export F=skipped
+''')
+        result = subprocess.run(['zsh', '-c', 'print -r -- "$A|$B|$C|$D|$E|${F-unset}"'],
+                                env={'HOME': str(self.home), 'PATH': '/usr/bin:/bin'},
+                                text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), 'x y|z $HOME|plain|"unbalanced||unset')
+
     def test_release_manifest_coverage(self):
         self.run_shell(r'''for ARCH in amd64 arm64; do
  for tool in yazi starship pnpm fzf rg fd zoxide herdr nvim lazygit tree-sitter uv; do

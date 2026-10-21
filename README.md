@@ -182,7 +182,7 @@ Each computer keeps its own sessions; cmux workspaces remain local to the Mac.
 | File | Purpose |
 |---|---|
 | `~/.zshrc.local` | Local aliases and shell preferences; preserved on reruns |
-| `~/.env` | Local environment variables, loaded by generated `~/.zshenv` |
+| `~/.env` | Local environment variables (`KEY=value` lines; matching quotes around a value are removed, nothing is expanded), loaded by generated `~/.zshenv` |
 | `~/.config/ghostty/config.local` | Local rendering overrides for Ghostty/cmux |
 | `~/.config/starship.toml` | Prompt theme (Nerd Font); `starship-plain.toml` is the plain-symbol variant |
 | `~/.config/yazi/{init.lua,yazi.toml}` | File manager configuration |
