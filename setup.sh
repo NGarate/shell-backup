@@ -350,7 +350,8 @@ install_release_tool() {
     asset=$(release_asset "$name" "$OS_TYPE" "$ARCH") || return 1
     IFS='|' read -r url checksum <<< "$asset"
     (
-        local temp_dir binary source_binary
+        # Not local: Bash 3.2 runs the EXIT trap after the locals are gone.
+        local binary source_binary
         temp_dir=$(mktemp -d) || exit 1
         trap 'rm -rf "$temp_dir"' EXIT
         verified_download "$url" "$checksum" "$temp_dir/asset" || exit 1
@@ -775,9 +776,9 @@ install_herdr_integration() {
         codex) files=("$directory/config.toml" "$directory/hooks.json") ;;
         claude) files=("$directory/settings.json") ;;
     esac
-    for file in "${files[@]}"; do
+    for file in ${files[@]+"${files[@]}"}; do
         if ! copy=$(snapshot_file "$file"); then
-            rm -f "${snapshots[@]}"
+            rm -f ${snapshots[@]+"${snapshots[@]}"}
             record_result "Herdr/$target" skipped "could not copy $file for a backup; not installed"
             return 0
         fi
@@ -915,7 +916,8 @@ install_font_archive() {
     dir=$(font_install_dir "$id")
     log "Installing font $id $tag..."
     (
-        local temp_dir url checksum files file source_file entry n=0
+        # Not local: Bash 3.2 runs the EXIT trap after the locals are gone.
+        local url checksum files file source_file entry n=0
         local -a staged=()
         temp_dir=$(mktemp -d) || exit 1
         trap 'rm -rf "$temp_dir"' EXIT
@@ -939,7 +941,7 @@ install_font_archive() {
             done
         done < <(font_asset "$id")
         mkdir -p "$dir" "$FONT_MARKER_DIR" || exit 1
-        for entry in "${staged[@]}"; do
+        for entry in ${staged[@]+"${staged[@]}"}; do
             source_file="${entry%|*}"
             file="${entry##*|}"
             install -m 644 "$source_file" "$dir/.$file.setup" || exit 1
@@ -1259,7 +1261,8 @@ EOF
     LOG_READY=true
     log "Starting setup on $(date)"
     local arg
-    for arg in "${IGNORED_ARGS[@]}"; do
+    # Bash 3.2 (macOS /bin/bash) rejects "${a[@]}" of an empty array under set -u.
+    for arg in ${IGNORED_ARGS[@]+"${IGNORED_ARGS[@]}"}; do
         warning "$arg is no longer needed and is ignored (Herdr is installed by default)"
     done
 }
@@ -1544,7 +1547,8 @@ install_neovim() {
         IFS='|' read -r url checksum <<< "$asset"
         mkdir -p "$opt" || return 1
         (
-            local temp_dir root
+            # Not local: Bash 3.2 runs the EXIT trap after the locals are gone.
+            local root
             temp_dir=$(mktemp -d "$opt/.nvim-setup.XXXXXX") || exit 1
             trap 'rm -rf "$temp_dir"' EXIT
             verified_download "$url" "$checksum" "$temp_dir/asset" 600 || exit 1
@@ -3842,7 +3846,7 @@ setup_nvm() {
     fi
     if [[ -z "$before" ]] || ! version_gte "$before" "$NVM_INSTALL_VERSION"; then
         (
-            local temp_dir
+            # Not local: Bash 3.2 runs the EXIT trap after the locals are gone.
             temp_dir=$(mktemp -d)
             trap 'rm -rf "$temp_dir"' EXIT
             verified_download "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_INSTALL_VERSION}/install.sh" \
