@@ -2019,10 +2019,40 @@ shell_backup_update_zinit() {
 ZINIT_UPDATE_EOF
 }
 
+# The generated .zshrc ends with this marker, so anything after it was appended
+# by an installer (opencode, Homebrew caveats, nvm...). Files deployed before the
+# marker existed ended with the .zshrc.local source line, which also counts.
+ZSHRC_END_MARKER='# End of shell-backup managed content. Lines added below are moved to ~/.zshrc.local by the next setup run.'
+ZSHRC_LOCAL_SOURCE='[[ -f "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"'
+
+# Move those appended lines to the end of ~/.zshrc.local before .zshrc is
+# replaced, so they keep running at the same point. A block whose lines are all
+# there already (an installer that appends again) is not copied twice.
+move_appended_zshrc_lines() {
+    local zshrc="$HOME/.zshrc" local_rc="$HOME/.zshrc.local" appended line present=true
+    [[ -f "$zshrc" ]] || return 0
+    appended=$(awk -v marker="$ZSHRC_END_MARKER" -v source_line="$ZSHRC_LOCAL_SOURCE" '
+        $0 == marker || $0 == source_line { found = 1; out = ""; started = 0; next }
+        found && (started || NF) { started = 1; out = out $0 "\n" }
+        END { printf "%s", out }' "$zshrc") || return 1
+    [[ -n "$appended" ]] || return 0
+    [[ -f "$local_rc" ]] || present=false
+    while [[ "$present" == true ]] && IFS= read -r line; do
+        [[ -z "${line//[[:space:]]/}" ]] || grep -qxF -- "$line" "$local_rc" || present=false
+    done <<< "$appended"
+    [[ "$present" == false ]] || return 0
+    backup_file "$local_rc" || return 1
+    [[ -e "$local_rc" ]] || (umask 077 && : > "$local_rc") || return 1
+    { [[ -s "$local_rc" ]] && printf '\n'; printf '%s\n' "$appended"; } >> "$local_rc" || return 1
+    success "Moved lines appended to ~/.zshrc into ~/.zshrc.local:"
+    printf '%s\n' "$appended" | sed 's/^/    /'
+}
+
 deploy_zshrc() {
     log "Deploying .zshrc configuration..."
 
     deploy_zinit_updater
+    move_appended_zshrc_lines || return 1
 
     # Set platform-specific paths
     local pnpm_home
@@ -2396,6 +2426,7 @@ fi
 # Machine-local preferences survive setup reruns.
 [[ -f "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"
 
+# End of shell-backup managed content. Lines added below are moved to ~/.zshrc.local by the next setup run.
 ZSHRC_EOF
     success ".zshrc deployed"
 }

@@ -431,6 +431,43 @@ retry() {{ cp "$HOME/archive.tar.gz" "${{@: -1}}"; }}
         # Identical redeployment never creates backups.
         self.assertFalse((self.home / '.backup').exists())
 
+    def test_lines_appended_to_zshrc_move_to_local_file_once(self):
+        zshrc = self.home / '.zshrc'
+        local_shell = self.home / '.zshrc.local'
+        appended = '# opencode\nexport PATH=/home/me/.opencode/bin:$PATH\n'
+        self.run_shell('deploy_zshrc')
+        managed = zshrc.read_text()
+        # The marker that ends the managed content matches the heredoc.
+        self.assertTrue(managed.endswith(self.run_shell('printf %s "$ZSHRC_END_MARKER"') + '\n'))
+        # Without a local file one is created, private, holding the block.
+        zshrc.write_text(managed + '\n' + appended)
+        self.run_shell('deploy_zshrc')
+        self.assertEqual(zshrc.read_text(), managed)
+        self.assertEqual(local_shell.read_text(), appended)
+        self.assertEqual(local_shell.stat().st_mode & 0o777, 0o600)
+        # The installer appends again: the block is not duplicated.
+        zshrc.write_text(managed + appended)
+        self.run_shell('deploy_zshrc')
+        self.assertEqual(zshrc.read_text(), managed)
+        self.assertEqual(local_shell.read_text(), appended)
+        # A new block goes after the existing preferences.
+        zshrc.write_text(managed + 'export PATH=/opt/mysql/bin:$PATH\n')
+        self.run_shell('deploy_zshrc')
+        self.assertEqual(local_shell.read_text(), appended + '\nexport PATH=/opt/mysql/bin:$PATH\n')
+        # A .zshrc deployed before the marker existed ends at the source line,
+        # so what follows that line is moved too.
+        legacy = managed[:managed.index('# End of shell-backup')].rstrip('\n') + '\n'
+        zshrc.write_text(legacy + 'export LEGACY=1\n')
+        self.run_shell('deploy_zshrc')
+        self.assertTrue(local_shell.read_text().endswith('\nexport LEGACY=1\n'))
+        self.assertEqual(zshrc.read_text(), managed)
+        # A hand-edited .zshrc without the managed ending is only backed up.
+        zshrc.write_text('edited by hand\n')
+        before = local_shell.read_text()
+        self.run_shell('deploy_zshrc')
+        self.assertEqual(local_shell.read_text(), before)
+        self.assertEqual(zshrc.read_text(), managed)
+
     # Every stage that runs without network or packages, in main() order.
     OFFLINE_STAGES = '''
 font_asset() { echo "v1|https://example.invalid/fonts.zip|$FIXTURE_DIGEST|A.ttf"; }
