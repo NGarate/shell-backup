@@ -129,8 +129,10 @@ herdr session list
 herdr integration status
 ```
 
-Setup configures the prefix as **Ctrl+Space** and the `tokyo-night` theme in
-`~/.config/herdr/config.toml` (other settings are kept), reloads a running
+Setup configures the prefix as **Ctrl+Space**, the `tokyo-night` theme, the
+hostname and time on the right of the tab bar, no tab bar for a single tab and
+desktop notifications for agents in `~/.config/herdr/config.toml` (other
+settings are kept), reloads a running
 Herdr server when that file changed, and installs
 `~/.local/bin/shell-backup-attach [session]`, the single remote command for every
 client (default session `personal`). Press the prefix, then `q`, to detach and

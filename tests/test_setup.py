@@ -142,7 +142,10 @@ esac
     def test_herdr_prefix_fresh_and_idempotent(self):
         output = self.run_shell('NON_INTERACTIVE=true\nsetup_herdr')
         config = self.home / '.config/herdr/config.toml'
-        self.assertEqual(config.read_text(), '[keys]\nprefix = "ctrl+space"\n\n[theme]\nname = "tokyo-night"\n')
+        self.assertEqual(config.read_text(), '[keys]\nprefix = "ctrl+space"\n\n[theme]\nname = "tokyo-night"\n\n[ui]\n'
+                         'hide_tab_bar_when_single_tab = true\n'
+                         'tab_bar_right = [{ type = "hostname" }, { type = "datetime", format = "%H:%M" }]\n\n'
+                         '[ui.toast]\ndelivery = "terminal"\n')
         self.assertIn('Herdr config: verified', output)
         before = config.stat().st_mtime_ns
         self.run_shell('configure_herdr_config')
@@ -244,6 +247,28 @@ command = "echo hello"
         output = self.run_shell('! configure_herdr_theme')
         self.assertIn('unsupported name value', output)
         self.assertEqual(config.read_text(), '[theme]\nname = ["dracula"]\n')
+
+    def test_herdr_raw_ui_settings_replace_values_and_reject_ambiguous_layouts(self):
+        """Raw edits write TOML values (bool, inline list); toast inline in [ui] is left to the user."""
+        config = self.home / '.config/herdr/config.toml'
+        config.parent.mkdir()
+        config.write_text('[ui]\nhide_tab_bar_when_single_tab = false # mine\ntab_bar_right = [{ type = "zoom" }]\n'
+                          '[ui.toast]\ndelivery = "herdr"\n')
+        self.run_shell('configure_herdr_config')
+        ui = self.toml(config.read_text()).get('ui')
+        if ui is not None:  # tomllib is missing on old Pythons
+            self.assertIs(ui['hide_tab_bar_when_single_tab'], True)
+            self.assertEqual([e['type'] for e in ui['tab_bar_right']], ['hostname', 'datetime'])
+            self.assertEqual(ui['toast']['delivery'], 'terminal')
+        self.assertIn('hide_tab_bar_when_single_tab = true # mine\n', config.read_text())
+        for original, reason in [
+            ('[ui]\ntoast = { delivery = "herdr" }\n', 'inline/dotted ui.toast table'),
+            ('[ui]\ntab_bar_right = [\n  { type = "zoom" },\n]\n', 'multiline tab_bar_right list'),
+        ]:
+            config.write_text(original)
+            output = self.run_shell('! configure_herdr_config')
+            self.assertIn(reason, output)
+            self.assertEqual(config.read_text(), original)
 
     def test_macos_editor_clis_linked_from_app_bundles(self):
         """Bundled code/zed CLIs are linked into ~/.local/bin for the shell and the Yazi opener."""

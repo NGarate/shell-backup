@@ -582,10 +582,11 @@ file_mode() {
 # beyond bash and awk. Edits are limited to ordinary tables and single-line
 # values: ambiguous layouts fail with the file kept. With `list`, an existing
 # list value is kept and the wanted string added when missing (Herdr 0.9.2+
-# accepts several prefixes). herdr_toml_set applies one edit from a file to a
-# file; configure_herdr_settings chains edits and deploys the result once.
+# accepts several prefixes). With `raw`, the wanted value is written as TOML
+# (a boolean, or a single-line list). herdr_toml_set applies one edit from a
+# file to a file; configure_herdr_settings chains edits and deploys the result once.
 herdr_toml_set() {
-    local input="$1" output="$2" crlf="$3" trailing="$4" table="$5" key="$6" wanted="$7" list="${8:-}" program
+    local input="$1" output="$2" crlf="$3" trailing="$4" table="$5" key="$6" wanted="$7" mode="${8:-}" program
     read -r -d '' program <<'HERDR_SETTING_AWK' || true
 function fail(message) { print message > "/dev/stderr"; exit 1 }
 {
@@ -598,12 +599,17 @@ END {
     nl = crlf ? "\r\n" : "\n"
     tbl = "(" table "|\"" table "\"|'" table "')"
     k = "(" key "|\"" key "\"|'" key "')"
-    quoted = "\"" wanted "\""
+    list = mode == "list"
+    raw = mode == "raw"
+    quoted = raw ? wanted : "\"" wanted "\""
+    # A subtable such as ui.toast may also be written as toast = {...} in [ui].
+    leaf = index(table, ".") ? table : ""
+    sub(/.*\./, "", leaf)
     sections = 0
     for (i = 1; i <= n; i++) {
         if (index(L[i], "\"\"\"") || index(L[i], "'''"))
             fail("multiline TOML strings require a manual " key " edit")
-        if (L[i] ~ ("^[ \t]*" tbl "[ \t]*[.=]"))
+        if (L[i] ~ ("^[ \t]*" tbl "[ \t]*[.=]") || (leaf != "" && L[i] ~ ("^[ \t]*" leaf "[ \t]*[.=]")))
             fail("inline/dotted " table " table requires a manual " key " edit")
         if (L[i] ~ ("^[ \t]*\\[[ \t]*" tbl "[ \t]*\\][ \t]*(#.*)?$")) { sections++; header = i }
     }
@@ -624,12 +630,13 @@ END {
             rest = substr(line, RLENGTH + 1)
             if (rest ~ /^"/) { if (!match(rest, /^"([^"\\]|\\.)*"/)) fail("unsupported " key " value") }
             else if (rest ~ /^'/) { if (!match(rest, /^'[^']*'/)) fail("unsupported " key " value") }
-            else if (rest ~ /^\[/ && list) { if (!match(rest, /^\[[^\]]*\]/)) fail("multiline " key " list requires a manual edit") }
+            else if (rest ~ /^\[/ && (list || raw)) { if (!match(rest, /^\[[^\]]*\]/)) fail("multiline " key " list requires a manual edit") }
+            else if (raw) { if (!match(rest, /^[A-Za-z0-9_.+-]+/)) fail("unsupported " key " value") }
             else fail("unsupported " key " value")
             value = substr(rest, 1, RLENGTH)
             tail = substr(rest, RLENGTH + 1)
             if (tail !~ /^[ \t]*(#.*)?$/) fail("unsupported " key " value")
-            if (value ~ /^\[/) {
+            if (list && value ~ /^\[/) {
                 if (index(value, quoted) == 0 && index(value, "'" wanted "'") == 0) {
                     inner = substr(value, 2, length(value) - 2)
                     sub(/^[ \t]+/, "", inner); sub(/[ \t]+$/, "", inner)
@@ -658,15 +665,15 @@ END {
 }
 HERDR_SETTING_AWK
     awk -v crlf="$crlf" -v trailing="$trailing" -v table="$table" -v key="$key" -v wanted="$wanted" \
-        -v list="${list:+1}" "$program" "$input" > "$output"
+        -v mode="$mode" "$program" "$input" > "$output"
 }
 
-# configure_herdr_settings <label> <table|key|value[|list]>...
+# configure_herdr_settings <label> <table|key|value[|list|raw]>...
 configure_herdr_settings() {
     local label="$1"
     shift
     local path="${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}" source=/dev/null
-    local mode=644 crlf=0 trailing=1 current next errors reason edit table key wanted list summary=""
+    local mode=644 crlf=0 trailing=1 current next errors reason edit table key wanted kind summary=""
     if [[ -e "$path" ]]; then
         if [[ ! -f "$path" ]]; then
             warning "$label: $path is not a regular file; file preserved."
@@ -683,10 +690,10 @@ configure_herdr_settings() {
     errors=$(mktemp) || { rm -f "$current"; return 1; }
     cat "$source" > "$current" || { rm -f "$current" "$errors"; return 1; }
     for edit in "$@"; do
-        IFS='|' read -r table key wanted list <<< "$edit"
+        IFS='|' read -r table key wanted kind <<< "$edit"
         summary+="${summary:+, }$key $wanted"
         next=$(mktemp) || { rm -f "$current" "$errors"; return 1; }
-        if ! herdr_toml_set "$current" "$next" "$crlf" "$trailing" "$table" "$key" "$wanted" "$list" 2> "$errors"; then
+        if ! herdr_toml_set "$current" "$next" "$crlf" "$trailing" "$table" "$key" "$wanted" "$kind" 2> "$errors"; then
             reason=$(cat "$errors")
             rm -f "$current" "$next" "$errors"
             warning "$label: ${reason:-config could not be edited}; file preserved."
@@ -712,11 +719,19 @@ readonly HERDR_PREFIX_EDIT='keys|prefix|ctrl+space|list'
 # Built-in Herdr themes (0.9.5): catppuccin, terminal, tokyo-night, dracula,
 # nord, gruvbox, one-dark, solarized, kanagawa, rose-pine, vesper.
 readonly HERDR_THEME_EDIT='theme|name|tokyo-night'
+# Tab bar status (server-side, so a remote attach shows the remote host), no
+# tab row for a single tab, and agent done/needs-input as desktop notifications.
+readonly HERDR_TAB_BAR_EDIT='ui|tab_bar_right|[{ type = "hostname" }, { type = "datetime", format = "%H:%M" }]|raw'
+readonly HERDR_SINGLE_TAB_EDIT='ui|hide_tab_bar_when_single_tab|true|raw'
+readonly HERDR_TOAST_EDIT='ui.toast|delivery|terminal'
 
 configure_herdr_prefix() { configure_herdr_settings 'Herdr prefix' "$HERDR_PREFIX_EDIT"; }
 configure_herdr_theme() { configure_herdr_settings 'Herdr theme' "$HERDR_THEME_EDIT"; }
-# The stage: both settings in one write, so a fresh file gets no backup.
-configure_herdr_config() { configure_herdr_settings 'Herdr config' "$HERDR_PREFIX_EDIT" "$HERDR_THEME_EDIT"; }
+# The stage: every setting in one write, so a fresh file gets no backup.
+configure_herdr_config() {
+    configure_herdr_settings 'Herdr config' "$HERDR_PREFIX_EDIT" "$HERDR_THEME_EDIT" \
+        "$HERDR_TAB_BAR_EDIT" "$HERDR_SINGLE_TAB_EDIT" "$HERDR_TOAST_EDIT"
+}
 
 # Herdr 0.9.5 provides all four installers, but none of these four
 # session/lifecycle integrations is active merely by installing Herdr itself.
@@ -2769,8 +2784,10 @@ format = """\
 $os\
 $directory\
 (\
+    ${custom.worktree}\
     $git_branch\
     $git_status\
+    $git_state\
 )\
 $cmd_duration\
 $fill\
@@ -2877,6 +2894,16 @@ symbol = " "
 [git_status]
 format = '([ ](fg:git_status)[ $all_status$ahead_behind ]($style)[](fg:git_status))'
 style = "fg:text_light bg:git_status"
+
+[git_state]
+format = " [](fg:git)[$state( $progress_current/$progress_total)](fg:text_light bg:git)[](fg:git)"
+
+# Linked worktree: its git dir differs from the shared one (a submodule's does not).
+[custom.worktree]
+when = 'git rev-parse --path-format=absolute --git-dir --git-common-dir | { read -r a; read -r b; [ "$a" != "$b" ]; }'
+require_repo = true
+shell = ["sh"]
+format = " [](fg:git)[󰙅 wt](fg:text_light bg:git)[](fg:git)"
 
 [docker_context]
 disabled=true
@@ -2997,8 +3024,10 @@ format = """\
 [╭╴](fg:arrow)\
 $directory\
 (\
+    ${custom.worktree}\
     $git_branch\
     $git_status\
+    $git_state\
 )\
 $cmd_duration\
 $fill\
@@ -3060,6 +3089,16 @@ symbol = "git:"
 [git_status]
 format = '([ $all_status$ahead_behind ]($style))'
 style = "fg:text_color bg:git_status"
+
+[git_state]
+format = " [ $state( $progress_current/$progress_total) ](fg:text_color bg:git)"
+
+# Linked worktree: its git dir differs from the shared one (a submodule's does not).
+[custom.worktree]
+when = 'git rev-parse --path-format=absolute --git-dir --git-common-dir | { read -r a; read -r b; [ "$a" != "$b" ]; }'
+require_repo = true
+shell = ["sh"]
+format = " [ wt ](fg:text_color bg:git)"
 
 [docker_context]
 disabled = true
