@@ -716,8 +716,10 @@ shell_backup_update_zinit
         self.assertNotIn('zinit update -q ohmyzsh/ohmyzsh', calls)
         self.assertIn('zinit update -q zsh-users/zsh-autosuggestions', calls)
         self.assertIn('zinit update -q MichaelAquilina/zsh-you-should-use', calls)
-        # A checkout already at its upstream needs no `zinit update`.
-        self.executable('git', '#!/bin/bash\necho "git $*" >> "$CALLS"\n[[ "$3" != rev-parse ]] || echo 0123abc\n')
+        # A checkout already at its upstream needs no `zinit update`. Git runs
+        # without the user's config, so an SSH insteadOf rewrite is ignored.
+        self.executable('git', '#!/bin/bash\n[[ $GIT_CONFIG_GLOBAL == /dev/null && $GIT_CONFIG_NOSYSTEM == 1 ]] || exit 9\n'
+                        'echo "git $*" >> "$CALLS"\n[[ "$3" != rev-parse ]] || echo 0123abc\n')
         (self.home / 'calls').unlink()
         result = subprocess.run(['zsh', '-f', '-c', '''
 typeset -A ZINIT

@@ -2004,6 +2004,9 @@ shell_backup_zinit_plugins=(
 shell_backup_update_zinit() {
     emulate -L zsh
     local plugin dir head failed=0
+    # Public repos over anonymous HTTPS: a user `url.*.insteadOf` rewrite to SSH
+    # fails in this background job when no unlocked key is in the agent.
+    local -x GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
     zinit self-update -q || return 1
     for plugin in $shell_backup_zinit_plugins; do
         dir="${ZINIT[PLUGINS_DIR]}/${plugin//\//---}"
