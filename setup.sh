@@ -3881,6 +3881,9 @@ setup_nvm() {
 
 setup_zinit_plugins() {
     log "Setting up Zinit plugins..."
+    # Clone and update public repos over anonymous HTTPS, like the updater:
+    # a user `url.*.insteadOf` rewrite to SSH fails before a key is set up.
+    local -x GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
     # First, ensure zinit is installed
     require_version zsh "$MIN_ZSH_VERSION" || return 1

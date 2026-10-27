@@ -1417,7 +1417,10 @@ release_asset starship darwin arm64 | grep -q apple-darwin
         (zinit / 'zinit.zsh').write_text('')
         (zinit / 'VERSION').write_text('3.17.1\n')
         # The bootstrap (zsh -c) fails at its update step; every other zsh call is real.
-        self.executable('zsh', f'#!/bin/bash\n[[ "$1" != -c ]] || exit 4\nexec {shlex.quote(shutil.which("zsh"))} "$@"\n')
+        # It runs without the user's git config, so an SSH insteadOf rewrite is ignored.
+        self.executable('zsh', '#!/bin/bash\n[[ "$1" != -c ]] || '
+                        '{ [[ $GIT_CONFIG_GLOBAL == /dev/null && $GIT_CONFIG_NOSYSTEM == 1 ]] && exit 4; exit 9; }\n'
+                        f'exec {shlex.quote(shutil.which("zsh"))} "$@"\n')
         plugin_dirs = [Path(line.split('|')[1]) for line in self.run_shell('zinit_expected_assets').splitlines()]
         for directory in plugin_dirs:
             directory.mkdir(parents=True)
